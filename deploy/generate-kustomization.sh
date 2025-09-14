@@ -38,18 +38,18 @@ images:
     newName: ${FULL_IMAGE}
     newTag: ${IMAGE_TAG}
 
-patchesStrategicMerge:
+patches:
 EOF
 
     # Add environment-specific patches
     if [ "$env" = "dev" ]; then
         cat >> "${kustomization_file}.tmp" <<EOF
-  - ingress-patch.yaml
-  - imagepullsecret-patch.yaml
+  - path: ingress-patch.yaml
+  - path: imagepullsecret-patch.yaml
 EOF
     elif [ "$env" = "prod" ]; then
         cat >> "${kustomization_file}.tmp" <<EOF
-  - deployment-patch.yaml
+  - path: deployment-patch.yaml
 
 replicas:
   - name: todo-api

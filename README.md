@@ -84,9 +84,9 @@ docker push <your-registry>/todo-api:v1.0.0
 プライベートレジストリを使用する場合、pull secretを作成します：
 
 ```bash
-kubectl create namespace todo
+kubectl create namespace todo-app
 
-kubectl -n todo create secret docker-registry regcred \
+kubectl -n todo-app create secret docker-registry regcred \
   --docker-server=<your-registry> \
   --docker-username=<username> \
   --docker-password=<password> \
@@ -115,7 +115,7 @@ spec:
 
 ```bash
 # deploy/overlays/dev/kustomization.yaml を編集
-# newName: <your-registry>/todo-api
+# newName: <your-registry>/home-kube
 # newTag: <your-tag>
 ```
 
@@ -130,8 +130,8 @@ cd todo-k3s
 kubectl apply -k deploy/overlays/dev
 
 # 状態確認
-kubectl -n todo get all
-kubectl -n todo get ingress
+kubectl -n todo-app get all
+kubectl -n todo-app get ingress
 ```
 
 #### 本番環境へのデプロイ
@@ -143,15 +143,15 @@ kubectl -n todo get ingress
 kubectl apply -k deploy/overlays/prod
 
 # 状態確認
-kubectl -n todo rollout status deployment/todo-api
-kubectl -n todo rollout status deployment/postgres
+kubectl -n todo-app rollout status deployment/todo-api
+kubectl -n todo-app rollout status deployment/postgres
 ```
 
 ### 動作確認
 
 ```bash
 # ポートフォワード（ローカルテスト用）
-kubectl -n todo port-forward service/todo-api-service 8080:80
+kubectl -n todo-app port-forward service/todo-api-service 8080:80
 
 # APIテスト
 curl http://localhost:8080/healthz
@@ -179,31 +179,31 @@ curl http://todo-dev.local/api/todos
 
 ```bash
 # Pod詳細確認
-kubectl -n todo describe pod <pod-name>
+kubectl -n todo-app describe pod <pod-name>
 
 # ログ確認
-kubectl -n todo logs <pod-name>
+kubectl -n todo-app logs <pod-name>
 ```
 
 ### データベース接続エラー
 
 ```bash
 # PostgreSQLの状態確認
-kubectl -n todo get pod -l app=postgres
-kubectl -n todo logs -l app=postgres
+kubectl -n todo-app get pod -l app=postgres
+kubectl -n todo-app logs -l app=postgres
 
 # Secret確認
-kubectl -n todo get secret postgres-secret -o yaml
+kubectl -n todo-app get secret postgres-secret -o yaml
 ```
 
 ### イメージPullエラー
 
 ```bash
 # Pull Secret確認
-kubectl -n todo get secret regcred
+kubectl -n todo-app get secret regcred
 
 # イベント確認
-kubectl -n todo get events --sort-by='.lastTimestamp'
+kubectl -n todo-app get events --sort-by='.lastTimestamp'
 ```
 
 ## アップデート手順
@@ -211,7 +211,7 @@ kubectl -n todo get events --sort-by='.lastTimestamp'
 1. 新しいイメージをビルド・プッシュ
 2. overlaysのkustomization.yamlでnewTagを更新
 3. `kubectl apply -k deploy/overlays/<env>`で適用
-4. `kubectl -n todo rollout status deployment/todo-api`で確認
+4. `kubectl -n todo-app rollout status deployment/todo-api`で確認
 
 ## クリーンアップ
 
@@ -220,5 +220,5 @@ kubectl -n todo get events --sort-by='.lastTimestamp'
 kubectl delete -k deploy/overlays/dev
 
 # Namespace全体を削除
-kubectl delete namespace todo
+kubectl delete namespace todo-app
 ```

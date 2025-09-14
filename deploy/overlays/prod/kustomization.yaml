@@ -12,11 +12,11 @@ secretGenerator:
 
 images:
   - name: IMAGE_PLACEHOLDER
-    newName: docker.io/example/example
+    newName: docker.io/subaru88/home-kube
     newTag: latest
 
-patchesStrategicMerge:
-  - deployment-patch.yaml
+patches:
+  - path: deployment-patch.yaml
 
 replicas:
   - name: todo-api

@@ -103,7 +103,11 @@ kubectl apply -k deploy/overlays/dev
 1. **コード変更とイメージビルド（ローカルPC）**
 ```bash
 cd app
-make deploy  # Docker imageのビルドとプッシュ
+# マルチアーキテクチャビルド（推奨）- amd64とarm64両対応
+make deploy
+
+# または単一アーキテクチャビルド（高速だが互換性注意）
+make deploy-local
 ```
 
 2. **デプロイ（リモートPC/k3sノード）**
@@ -131,6 +135,12 @@ kubectl apply -k deploy/overlays/dev
 
 ## 🔧 よく使うコマンド
 
+### アーキテクチャ確認
+```bash
+# ローカルとリモートのアーキテクチャを確認
+./deploy/check-arch.sh
+```
+
 ### ステータス確認
 ```bash
 # Pod一覧
@@ -144,6 +154,16 @@ kubectl -n todo-app get svc,ingress
 ```
 
 ### トラブルシューティング
+
+#### exec format error の場合
+```bash
+# アーキテクチャ不一致が原因
+# 解決方法: マルチアーキテクチャビルドを使用
+cd app
+make deploy  # amd64とarm64両対応のイメージをビルド
+```
+
+#### その他の問題
 ```bash
 # Podの詳細確認
 kubectl -n todo-app describe pod <pod-name>

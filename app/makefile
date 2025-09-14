@@ -63,11 +63,21 @@ docker-login:
 	@echo $(DOCKER_TOKEN) | docker login -u $(DOCKER_USERNAME) --password-stdin
 	@echo "Successfully logged in to Docker Hub"
 
-deploy: build docker-build docker-login
-	@echo "Building and pushing Docker image..."
+# Multi-architecture build support
+deploy: build docker-login
+	@echo "Building multi-arch Docker image and pushing..."
+	@echo "Image: $(IMAGE)"
+	@docker buildx create --use --name multi-arch-builder 2>/dev/null || true
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-t $(IMAGE) \
+		-t $(REG)/$(DOCKER_USER)/$(APP):latest \
+		--push .
+	@echo "Successfully pushed $(IMAGE) and :latest for amd64 and arm64"
+
+# Single architecture build for local testing
+deploy-local: build docker-build docker-login
+	@echo "Building and pushing Docker image (single arch)..."
 	@echo "Image: $(IMAGE)"
 	docker push $(IMAGE)
-	@echo "Tagging as latest..."
-	docker tag $(IMAGE) $(REG)/$(DOCKER_USER)/$(APP):latest
 	docker push $(REG)/$(DOCKER_USER)/$(APP):latest
-	@echo "Successfully pushed $(IMAGE) and :latest"
+	@echo "Successfully pushed $(IMAGE) and :latest (single arch)"

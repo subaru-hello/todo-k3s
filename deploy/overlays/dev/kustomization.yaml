@@ -12,9 +12,9 @@ secretGenerator:
 
 images:
   - name: IMAGE_PLACEHOLDER
-    newName: docker.io/example/example
+    newName: docker.io/subaru88/home-kube
     newTag: latest
 
-patchesStrategicMerge:
-  - ingress-patch.yaml
-  - imagepullsecret-patch.yaml
+patches:
+  - path: ingress-patch.yaml
+  - path: imagepullsecret-patch.yaml
