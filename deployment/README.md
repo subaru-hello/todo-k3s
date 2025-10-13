@@ -61,18 +61,23 @@ curl http://localhost:3000/api/todos
 ### 本番環境
 
 ```bash
-# 1. イメージをビルド & push（クライアントPC）
+# 1. Secret設定（初回のみ）
+cd deployment/environments/prod
+cp .env.secret.example .env.secret
+nano .env.secret  # POSTGRES_USER, POSTGRES_PASSWORD, JWT_SECRET を設定
+
+# 2. イメージをビルド & push（クライアントPC）
 cd packages/api
 docker build --target production -t docker.io/subaru88/home-kube:v1.0.1 .
 docker push docker.io/subaru88/home-kube:v1.0.1
 
-# 2. サーバーでデプロイ
+# 3. サーバーでデプロイ（.env.secret から自動的に Secret 作成）
 ./deployment/scripts/deploy.sh prod v1.0.1
 
-# 3. Cloudflare Tunnel設定（初回のみ）
+# 4. Cloudflare Tunnel設定（初回のみ）
 # deployment/cloudflare-tunnel/README.md を参照
 
-# 4. 外部からアクセス
+# 5. 外部からアクセス
 curl https://api.octomblog.com/healthz
 ```
 
@@ -135,13 +140,28 @@ docker build --target production -t docker.io/subaru88/home-kube:v1.0.0 ./packag
 
 ### 環境変数の変更
 
-`deployment/environments/{local,prod}/api-values.yaml` を編集：
+**本番環境の Secret（推奨）**
+
+`deployment/environments/prod/.env.secret` を編集：
+
+```bash
+POSTGRES_USER=youruser
+POSTGRES_PASSWORD=強力なパスワード
+POSTGRES_DB=yourdb
+JWT_SECRET=ランダムな長い文字列
+```
+
+デプロイ時に自動的に Kubernetes Secret として作成されます。
+
+**ローカル環境**
+
+`deployment/environments/local/api-values.yaml` を編集：
 
 ```yaml
 env:
-  NODE_ENV: production
-  ALLOWED_ORIGINS: "https://your-app.com"
-  JWT_SECRET: "your-secret"
+  NODE_ENV: development
+  ALLOWED_ORIGINS: "http://localhost:5173"
+  JWT_SECRET: "local-dev-secret"
 ```
 
 ### PostgreSQL設定の変更
@@ -149,10 +169,11 @@ env:
 `deployment/environments/{local,prod}/postgres-values.yaml` を編集：
 
 ```yaml
+# 注意: 本番環境では .env.secret の値が優先されます
 auth:
-  username: youruser
-  password: yourpassword
-  database: yourdb
+  username: postgres  # フォールバック値
+  password: postgres  # フォールバック値
+  database: todos
 
 persistence:
   size: 50Gi
@@ -294,10 +315,19 @@ git clone --filter=blob:none --sparse https://github.com/YOUR_ORG/todo-k3s.git
 cd todo-k3s
 git sparse-checkout set deployment
 
-# 本番環境設定
+# 本番環境のSecret設定
 cd deployment/environments/prod
 cp .env.secret.example .env.secret
-nano .env.secret  # PostgreSQLパスワード等を設定
+nano .env.secret  # PostgreSQLパスワード、JWT_SECRET等を設定
+
+# .env.secret の内容例:
+# POSTGRES_USER=produser
+# POSTGRES_PASSWORD=強力なパスワード
+# POSTGRES_DB=todos
+# JWT_SECRET=ランダムな長い文字列
+
+# 注意: deploy.sh 実行時に自動的に Kubernetes Secret が作成されるため、
+#       kubectl create secret を手動で実行する必要はありません
 ```
 
 #### 通常のデプロイ

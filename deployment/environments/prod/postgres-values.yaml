@@ -6,8 +6,11 @@ image:
   pullPolicy: IfNotPresent
 
 auth:
-  username: produser
-  password: "CHANGE-ME-PROD-PASSWORD"  # 本番デプロイ時は必ず変更
+  # 注意: これらの値は .env.secret が存在する場合は上書きされます
+  # 実際の認証情報は deployment/environments/prod/.env.secret に設定してください
+  # .env.secret がない場合のみ、以下のデフォルト値が使用されます
+  username: postgres
+  password: postgres
   database: todos
 
 persistence:

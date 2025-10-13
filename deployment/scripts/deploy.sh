@@ -73,6 +73,22 @@ echo "📦 Namespace作成: app"
 kubectl create namespace app 2>/dev/null || echo "Namespace 'app' は既に存在します"
 echo ""
 
+# .env.secret から Kubernetes Secret を作成
+ENV_SECRET_FILE="$REPO_ROOT/deployment/environments/$ENV/.env.secret"
+if [ -f "$ENV_SECRET_FILE" ]; then
+  echo "🔐 Kubernetes Secret作成: postgres-secret"
+  kubectl create secret generic postgres-secret \
+    --from-env-file="$ENV_SECRET_FILE" \
+    --namespace=app \
+    --dry-run=client -o yaml | kubectl apply -f -
+  echo "Secret 'postgres-secret' を作成/更新しました"
+  echo ""
+else
+  echo "⚠️  警告: $ENV_SECRET_FILE が見つかりません"
+  echo "   環境変数はデフォルト値または values.yaml の値が使用されます"
+  echo ""
+fi
+
 # PostgreSQLのデプロイ
 echo "🗄️  PostgreSQLをデプロイ中..."
 helm upgrade --install postgres ./deployment/charts/postgres \

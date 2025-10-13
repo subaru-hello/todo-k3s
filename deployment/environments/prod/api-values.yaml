@@ -14,13 +14,15 @@ service:
 env:
   NODE_ENV: production
   ALLOWED_ORIGINS: "https://app.octomblog.com"
-  JWT_SECRET: ""  # Kubernetes Secretから注入する場合は空にする
+  # JWT_SECRET は .env.secret から postgres-secret として注入されます
 
 postgres:
   useSecret: true
   secretName: postgres-secret
   host: postgres.app.svc.cluster.local
   port: "5432"
+  # JWT_SECRET も同じ postgres-secret から注入されます
+  injectJwtSecret: true
 
 resources:
   requests:
