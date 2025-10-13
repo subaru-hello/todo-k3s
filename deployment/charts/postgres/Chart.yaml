@@ -1,0 +1,6 @@
+apiVersion: v2
+name: postgres
+version: 0.1.0
+type: application
+description: Minimal PostgreSQL (single-node) for k3s
+appVersion: "16"

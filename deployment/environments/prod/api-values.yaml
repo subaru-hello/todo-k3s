@@ -1,0 +1,33 @@
+namespace: app
+
+image:
+  repository: docker.io/subaru88/home-kube
+  tag: "v1.0.0"  # 本番は固定バージョン
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+service:
+  type: ClusterIP
+  port: 3000
+
+env:
+  NODE_ENV: production
+  ALLOWED_ORIGINS: "https://app.octomblog.com"
+  JWT_SECRET: ""  # Kubernetes Secretから注入する場合は空にする
+
+postgres:
+  useSecret: true
+  secretName: postgres-secret
+  host: postgres.app.svc.cluster.local
+  port: "5432"
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "256Mi"
+  limits:
+    cpu: "1000m"
+    memory: "1Gi"
+
+imagePullSecrets: []

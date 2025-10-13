@@ -1,0 +1,6 @@
+apiVersion: v2
+name: api
+version: 0.1.0
+type: application
+description: Todo API (Hono + TypeORM) for k3s
+appVersion: "1.0.0"

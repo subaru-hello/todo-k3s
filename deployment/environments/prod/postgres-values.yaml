@@ -1,0 +1,27 @@
+namespace: app
+
+image:
+  repository: postgres
+  tag: "16-alpine"
+  pullPolicy: IfNotPresent
+
+auth:
+  username: produser
+  password: "CHANGE-ME-PROD-PASSWORD"  # 本番デプロイ時は必ず変更
+  database: todos
+
+persistence:
+  size: 20Gi
+  storageClassName: "local-path"
+
+resources:
+  requests:
+    cpu: "200m"
+    memory: "512Mi"
+  limits:
+    cpu: "2000m"
+    memory: "2Gi"
+
+networkPolicy:
+  enabled: true  # 本番は必須
+  allowFromAppLabel: api

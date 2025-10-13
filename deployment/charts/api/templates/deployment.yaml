@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+{{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+{{- end }}
+{{- end }}
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: PORT
+              value: "3000"
+            - name: NODE_ENV
+              value: {{ .Values.env.NODE_ENV | quote }}
+            - name: ALLOWED_ORIGINS
+              value: {{ .Values.env.ALLOWED_ORIGINS | quote }}
+{{- if .Values.env.JWT_SECRET }}
+            - name: JWT_SECRET
+              value: {{ .Values.env.JWT_SECRET | quote }}
+{{- end }}
+{{- if .Values.postgres.useSecret }}
+            - name: PGHOST
+              value: {{ .Values.postgres.host | quote }}
+            - name: PGPORT
+              value: {{ .Values.postgres.port | quote }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.secretName | quote }}
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.secretName | quote }}
+                  key: POSTGRES_PASSWORD
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.secretName | quote }}
+                  key: POSTGRES_DB
+{{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu | quote }}
+              memory: {{ .Values.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu | quote }}
+              memory: {{ .Values.resources.limits.memory | quote }}

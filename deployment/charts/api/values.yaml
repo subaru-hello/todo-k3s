@@ -1,0 +1,33 @@
+namespace: app
+
+image:
+  repository: docker.io/subaru88/home-kube
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+service:
+  type: ClusterIP
+  port: 3000
+
+env:
+  NODE_ENV: production
+  ALLOWED_ORIGINS: "https://app.octomblog.com"
+  JWT_SECRET: ""
+
+postgres:
+  useSecret: true
+  secretName: postgres-secret
+  host: postgres.app.svc.cluster.local
+  port: "5432"
+
+resources:
+  requests:
+    cpu: "50m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+imagePullSecrets: []

@@ -1,0 +1,11 @@
+tunnel: <TUNNEL_ID>  # cloudflare tunnel create で取得したID
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: api.octomblog.com
+    service: http://api.app.svc.cluster.local:3000
+    originRequest:
+      noTLSVerify: true
+      connectTimeout: 30s
+      tlsTimeout: 10s
+  - service: http_status:404
