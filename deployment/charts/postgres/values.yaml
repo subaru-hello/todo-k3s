@@ -1,5 +1,8 @@
 namespace: app
 
+# Helm で Secret を作成するかどうか（.env.secret を使う場合は false）
+createSecret: true
+
 image:
   repository: postgres
   tag: "16-alpine"

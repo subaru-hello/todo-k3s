@@ -1,5 +1,8 @@
 namespace: app
 
+# Secret は .env.secret から deploy.sh が自動作成するため、Helm では作成しない
+createSecret: false
+
 image:
   repository: postgres
   tag: "16-alpine"

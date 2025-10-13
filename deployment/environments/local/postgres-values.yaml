@@ -1,5 +1,8 @@
 namespace: app
 
+# ローカル環境では Helm で Secret を作成（開発の利便性）
+createSecret: true
+
 image:
   repository: postgres
   tag: "16-alpine"
