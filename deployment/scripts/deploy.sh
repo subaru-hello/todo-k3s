@@ -60,10 +60,14 @@ if [ "$ENV" = "prod" ]; then
 
   if command -v nerdctl &> /dev/null; then
     sudo nerdctl -n k8s.io pull "$IMAGE"
+  elif command -v crictl &> /dev/null; then
+    sudo crictl pull "$IMAGE"
+  elif command -v ctr &> /dev/null; then
+    sudo ctr -n k8s.io image pull "$IMAGE"
   elif command -v docker &> /dev/null; then
     docker pull "$IMAGE"
   else
-    echo "警告: nerdctl または docker が見つかりません。イメージのpullをスキップします。"
+    echo "警告: コンテナランタイム (nerdctl/crictl/ctr/docker) が見つかりません。イメージのpullをスキップします。"
   fi
   echo ""
 fi
