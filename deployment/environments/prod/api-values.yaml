@@ -2,7 +2,10 @@ namespace: app
 
 image:
   repository: docker.io/subaru88/home-kube
-  tag: "v1.0.0"  # 本番は固定バージョン
+  tag: "latest"  # デフォルト値(deploy.sh の --set で上書きされます)
+  # 推奨: デプロイ時にコミットハッシュタグを指定
+  # 例: ./scripts/deploy.sh prod sha-329968d
+  # タグ確認: https://hub.docker.com/r/subaru88/home-kube/tags
   pullPolicy: IfNotPresent
 
 replicaCount: 2

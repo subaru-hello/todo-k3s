@@ -73,13 +73,15 @@ cd deployment/environments/prod
 cp .env.secret.example .env.secret
 nano .env.secret  # POSTGRES_USER, POSTGRES_PASSWORD, JWT_SECRET を設定
 
-# 2. イメージをビルド & push（クライアントPC）
-cd packages/api
-docker build --target production -t docker.io/subaru88/home-kube:v1.0.1 .
-docker push docker.io/subaru88/home-kube:v1.0.1
+# 2. 最新のイメージタグを確認
+# Docker Hub: https://hub.docker.com/r/subaru88/home-kube/tags
+# GitHub Actions: リポジトリの Actions タブ → 最新ワークフロー
+#
+# 推奨: GitHub Actionsが自動生成するコミットハッシュタグ(sha-xxx)を使用
+# 例: sha-329968d
 
 # 3. サーバーでデプロイ（.env.secret から自動的に Secret 作成）
-./deployment/scripts/deploy.sh prod v1.0.1
+./deployment/scripts/deploy.sh prod sha-329968d  # ← 確認したタグを指定
 
 # 4. Cloudflare Tunnel設定（初回のみ）
 # deployment/cloudflare-tunnel/README.md を参照
@@ -87,6 +89,15 @@ docker push docker.io/subaru88/home-kube:v1.0.1
 # 5. 外部からアクセス
 curl https://api.octomblog.com/healthz
 ```
+
+**💡 イメージタグについて**:
+- **推奨**: `sha-329968d` (GitHub Actionsが自動生成)
+  - 再現性が高い
+  - 特定のコミットに紐付く
+  - ロールバックが容易
+- **非推奨**: `latest`
+  - どのバージョンか不明
+  - 予期しない変更が入る可能性
 
 ## 🏗️ アーキテクチャ
 
@@ -140,7 +151,14 @@ docker build --target development -t docker.io/subaru88/home-kube:dev ./packages
 ### 本番環境用（distroless、セキュア）
 
 ```bash
-docker build --target production -t docker.io/subaru88/home-kube:v1.0.0 ./packages/api
+# GitHub Actionsで自動ビルド(推奨)
+# git pushすると自動的にsha-xxxタグでビルドされます
+
+# 手動ビルドする場合
+cd packages/api
+docker build --target production \
+  -t docker.io/subaru88/home-kube:sha-$(git rev-parse --short HEAD) .
+docker push docker.io/subaru88/home-kube:sha-$(git rev-parse --short HEAD)
 ```
 
 ## 🔧 カスタマイズ
@@ -245,17 +263,38 @@ helm upgrade --install postgres ./deployment/charts/postgres \
 
 ### APIのアップデート
 
+#### 方法1: GitHub Actions経由(推奨)
+
 ```bash
-# 1. 新バージョンをビルド & push
-docker build --target production -t docker.io/subaru88/home-kube:v1.0.2 ./packages/api
-docker push docker.io/subaru88/home-kube:v1.0.2
+# 1. コードを修正してpush
+git add packages/api
+git commit -m "feat: 新機能を追加"
+git push
 
-# 2. サーバーでpull & デプロイ
-sudo nerdctl -n k8s.io pull docker.io/subaru88/home-kube:v1.0.2
-./deployment/scripts/deploy.sh prod v1.0.2
+# 2. GitHub Actionsの完了を待つ
+# GitHub → Actions タブで自動ビルドを確認
 
-# 3. ローリングアップデート確認
+# 3. 生成されたタグを確認
+# GitHub Actions のログから sha-xxxxxxx を確認
+# https://hub.docker.com/r/subaru88/home-kube/tags
+
+# 4. サーバーでデプロイ
+./deployment/scripts/deploy.sh prod sha-abc1234  # ← 確認したタグ
+
+# 5. ローリングアップデート確認
 kubectl -n app rollout status deployment/api
+```
+
+#### 方法2: 手動ビルド&プッシュ
+
+```bash
+# 1. ローカルでビルド
+cd packages/api
+docker build --target production -t docker.io/subaru88/home-kube:sha-$(git rev-parse --short HEAD) .
+docker push docker.io/subaru88/home-kube:sha-$(git rev-parse --short HEAD)
+
+# 2. サーバーでデプロイ
+./deployment/scripts/deploy.sh prod sha-$(git rev-parse --short HEAD)
 ```
 
 ### PostgreSQLのアップデート

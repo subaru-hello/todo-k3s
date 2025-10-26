@@ -7,12 +7,17 @@ usage() {
   echo ""
   echo "引数:"
   echo "  環境      : local または prod"
-  echo "  image-tag : APIイメージのタグ（省略時: latest for local, v1.0.0 for prod）"
+  echo "  image-tag : APIイメージのタグ（省略時: latest）"
+  echo ""
+  echo "💡 推奨: 本番環境ではコミットハッシュタグを使用してください"
+  echo "   タグの確認方法:"
+  echo "   - Docker Hub: https://hub.docker.com/r/subaru88/home-kube/tags"
+  echo "   - GitHub Actions: リポジトリの Actions タブ → 最新ワークフロー"
   echo ""
   echo "例:"
-  echo "  $0 local"
-  echo "  $0 local latest"
-  echo "  $0 prod v1.0.1"
+  echo "  $0 local                    # ローカル環境(latest)"
+  echo "  $0 prod sha-329968d         # 本番環境(コミットハッシュタグ推奨)"
+  echo "  $0 prod latest              # 本番環境(latest、非推奨)"
   exit 1
 }
 
@@ -32,10 +37,22 @@ fi
 
 # デフォルトのイメージタグ
 if [ -z "$IMAGE_TAG" ]; then
-  if [ "$ENV" = "local" ]; then
-    IMAGE_TAG="latest"
-  else
-    IMAGE_TAG="v1.0.0"
+  IMAGE_TAG="latest"
+
+  if [ "$ENV" = "prod" ]; then
+    echo "⚠️  警告: 本番環境でlatestタグを使用しています"
+    echo "   推奨: コミットハッシュタグ(sha-xxx)を明示的に指定してください"
+    echo "   例: $0 prod sha-329968d"
+    echo ""
+    echo "   タグ確認: https://hub.docker.com/r/subaru88/home-kube/tags"
+    echo ""
+    read -p "このまま続行しますか? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      echo "デプロイを中止しました"
+      exit 1
+    fi
+    echo ""
   fi
 fi
 
@@ -77,19 +94,37 @@ echo "📦 Namespace作成: app"
 kubectl create namespace app 2>/dev/null || echo "Namespace 'app' は既に存在します"
 echo ""
 
+# 既存の非Helm管理Secretを削除(Helm管理に移行するため)
+if kubectl -n app get secret postgres-secret &>/dev/null; then
+  # Helmが管理しているかチェック
+  MANAGED_BY=$(kubectl -n app get secret postgres-secret -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || echo "")
+
+  if [ "$MANAGED_BY" != "Helm" ]; then
+    echo "🧹 既存の非Helm管理Secret 'postgres-secret' を削除中..."
+    kubectl -n app delete secret postgres-secret
+    echo "   削除しました。Helmで再作成します。"
+    echo ""
+  fi
+fi
+
 # .env.secret から Kubernetes Secret を作成
 ENV_SECRET_FILE="$REPO_ROOT/deployment/environments/$ENV/.env.secret"
+CREATE_SECRET_FLAG="true"
+
 if [ -f "$ENV_SECRET_FILE" ]; then
-  echo "🔐 Kubernetes Secret作成: postgres-secret"
+  echo "🔐 Kubernetes Secret作成: postgres-secret (.env.secretから)"
   kubectl create secret generic postgres-secret \
     --from-env-file="$ENV_SECRET_FILE" \
     --namespace=app \
     --dry-run=client -o yaml | kubectl apply -f -
-  echo "Secret 'postgres-secret' を作成/更新しました"
+  echo "   Secret 'postgres-secret' を作成/更新しました"
   echo ""
+
+  # Helmにはsecret作成させない
+  CREATE_SECRET_FLAG="false"
 else
   echo "⚠️  警告: $ENV_SECRET_FILE が見つかりません"
-  echo "   環境変数はデフォルト値または values.yaml の値が使用されます"
+  echo "   Helm Chartのデフォルト値でSecretを作成します"
   echo ""
 fi
 
@@ -97,7 +132,8 @@ fi
 echo "🗄️  PostgreSQLをデプロイ中..."
 helm upgrade --install postgres ./deployment/charts/postgres \
   -n app \
-  -f ./deployment/environments/$ENV/postgres-values.yaml
+  -f ./deployment/environments/$ENV/postgres-values.yaml \
+  --set createSecret=$CREATE_SECRET_FLAG
 
 echo ""
 
