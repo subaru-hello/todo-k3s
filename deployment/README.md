@@ -2,7 +2,15 @@
 
 自宅k3sでの手動pull運用によるAPI + PostgreSQL のHelm Chartデプロイ構成です。
 
-> **Note**: 以前のKustomize構成は `base/` と `overlays/` に残っていますが、参考用です。新しいデプロイには `charts/` と `environments/` を使用してください。
+## ⚠️ 古いデプロイメントをお使いの方へ
+
+もし以前のKustomizeベースのデプロイメントや、`node-app`、`go-echo`などの古いデプロイメントが残っている場合は、まず以下のクリーンアップスクリプトを実行してください:
+
+```bash
+./deployment/cleanup-old-deployments.sh
+```
+
+これにより、CrashLoopBackOff状態の古いPodが削除され、クリーンな状態でHelm Chartをデプロイできます。
 
 ## 📁 ディレクトリ構造
 
@@ -37,8 +45,7 @@ deployment/
 │   └── README.md
 ├── scripts/
 │   └── deploy.sh          # デプロイスクリプト
-├── base/                  # （旧）Kustomize構成（参考用）
-└── overlays/              # （旧）Kustomize構成（参考用）
+└── cleanup-old-deployments.sh  # 古いデプロイメント削除スクリプト
 ```
 
 ## 🚀 クイックスタート
