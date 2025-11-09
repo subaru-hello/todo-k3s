@@ -34,10 +34,16 @@ deployment/
 ├── environments/
 │   ├── local/             # ローカル環境設定
 │   │   ├── postgres-values.yaml
-│   │   └── api-values.yaml
+│   │   ├── api-values.yaml
+│   │   └── .env.secret    # Secret用環境変数（gitignore）
 │   └── prod/              # 本番環境設定
 │       ├── postgres-values.yaml
-│       └── api-values.yaml
+│       ├── api-values.yaml
+│       └── .env.secret    # Secret用環境変数（gitignore）
+├── manifests/             # プレーンなKubernetes YAML（学習・検証用）
+│   ├── postgres-statefulset.yaml
+│   ├── postgres-service.yaml
+│   └── api-deployment.yaml
 ├── cloudflare-tunnel/     # Cloudflare Tunnel設定（本番のみ）
 │   ├── config-prod.yaml
 │   ├── deployment-prod.yaml
@@ -47,6 +53,8 @@ deployment/
 │   └── deploy.sh          # デプロイスクリプト
 └── cleanup-old-deployments.sh  # 古いデプロイメント削除スクリプト
 ```
+
+**Note**: `manifests/`ディレクトリのYAMLファイルは学習・検証用です。実際のデプロイには`charts/`のHelmチャートを使用してください。
 
 ## 🚀 クイックスタート
 

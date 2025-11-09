@@ -2,7 +2,7 @@ namespace: app
 
 image:
   repository: docker.io/subaru88/home-kube
-  tag: "latest"
+  tag: "sha-e432059"
   pullPolicy: IfNotPresent
 
 replicaCount: 1

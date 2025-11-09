@@ -383,13 +383,24 @@ graph TB
 
 データベースの認証情報をSecretとして保存します。Secretは、パスワードやAPIキーなどの機密情報を安全に保存するためのKubernetesリソースです。
 
-```bash
-✗ kubectl -n app create secret generic postgres-secret \
-  --from-literal=POSTGRES_USER=localuser \
-  --from-literal=POSTGRES_PASSWORD=password \
-  --from-literal=POSTGRES_DB=todos
+まず、認証情報を`.env.secret`ファイルとして用意します：
 
-secret/postgres-secret created
+```bash
+# deployment/environments/local/.env.secret
+POSTGRES_USER=localuser
+POSTGRES_PASSWORD=localpass
+POSTGRES_DB=todos
+```
+
+このファイルからSecretを作成します：
+
+```bash
+✗ kubectl create secret generic postgres-secret \
+  --from-env-file=deployment/environments/local/.env.secret \
+  --namespace=app --dry-run=client -o yaml | kubectl apply -f -
+
+secret/postgres-secret configured
+Warning: resource secrets/postgres-secret is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by kubectl apply. kubectl apply should only be used on resources created declaratively by either kubectl create --save-config or kubectl apply. The missing annotation will be patched automatically.
 ```
 
 
@@ -470,28 +481,37 @@ spec:
 
 デプロイ実行:
 
-```bash
-✗　kubectl apply -f postgres-statefulset.yaml
+今回はHelmを使ってデプロイします。Helmチャートが既に用意されている想定です。
 
-service/postgres created
-statefulset.apps/postgres created
+```bash
+✗ helm upgrade --install postgres ./deployment/charts/postgres \
+  -n app \
+  -f ./deployment/environments/local/postgres-values.yaml \
+  --set createSecret=false
+
+Release "postgres" does not exist. Installing it now.
+NAME: postgres
+LAST DEPLOYED: Sun Nov  9 23:25:31 2025
+NAMESPACE: app
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
 ```
 
 確認:
 
 ```bash
- ✗ kubectl -n app get statefulset
+✗ kubectl -n app get statefulset
 NAME       READY   AGE
-postgres   1/1     2d11h
+postgres   1/1     20s
 
 ✗ kubectl -n app get pods
-NAME                   READY   STATUS    RESTARTS   AGE
-api-586858cdb6-zkvkk   1/1     Running   0          2d6h
-postgres-0             1/1     Running   0          2d11h
+NAME         READY   STATUS    RESTARTS   AGE
+postgres-0   1/1     Running   0          49s
 
 ✗ kubectl -n app get pvc
 NAME                STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
-pgdata-postgres-0   Bound    pvc-b29c634e-f146-4a94-a116-f59862b43edf   5Gi        RWO            local-path     <unset>                 2d11h
+pgdata-postgres-0   Bound    pvc-935c59d8-0060-4e19-b4f3-f52c5e23e875   1Gi        RWO            local-path     <unset>                 21s
 ```
 
 PostgreSQLが正常に起動し、PVCもBindされました。
@@ -601,12 +621,15 @@ PostgreSQL init process complete; ready for start up.
 ### PostgreSQL接続テスト
 
 ```bash
-✗   kubectl -n app exec -it postgres-0 -- psql -U localuser -d todos -c "\dt"
+✗ kubectl -n app exec postgres-0 -- psql -U localuser -d todos -c '\dt'
          List of relations
- Schema | Name  | Type  |   Owner   
+ Schema | Name  | Type  |   Owner
 --------+-------+-------+-----------
  public | todos | table | localuser
+(1 row)
 ```
+
+テーブルが正常に作成されています。
 
 ---
 
@@ -719,11 +742,39 @@ spec:
 
 デプロイ実行:
 
-```bash
-✗  kubectl apply -f api-deployment.yaml
+まず、Dockerイメージをk3dクラスターにインポートします：
 
-service/api created
-deployment.apps/api created
+```bash
+✗ k3d image import subaru88/home-kube:sha-e432059 -c todo-local
+INFO[0000] Importing image(s) into cluster 'todo-local'
+INFO[0000] Starting new tools node...
+INFO[0000] Starting node 'k3d-todo-local-tools'
+INFO[0000] Saving 1 image(s) from runtime...
+INFO[0001] Importing images into nodes...
+INFO[0001] Importing images from tarball '/k3d/images/k3d-todo-local-images-20251109232326.tar' into node 'k3d-todo-local-agent-1'...
+INFO[0001] Importing images from tarball '/k3d/images/k3d-todo-local-images-20251109232326.tar' into node 'k3d-todo-local-server-0'...
+INFO[0001] Importing images from tarball '/k3d/images/k3d-todo-local-images-20251109232326.tar' into node 'k3d-todo-local-agent-0'...
+INFO[0002] Removing the tarball(s) from image volume...
+INFO[0003] Removing k3d-tools node...
+INFO[0003] Successfully imported image(s)
+INFO[0003] Successfully imported 1 image(s) into 1 cluster(s)
+```
+
+次にHelmでAPIをデプロイします：
+
+```bash
+✗ helm upgrade --install api ./deployment/charts/api \
+  -n app \
+  -f ./deployment/environments/local/api-values.yaml \
+  --set image.tag=sha-e432059
+
+Release "api" does not exist. Installing it now.
+NAME: api
+LAST DEPLOYED: Sun Nov  9 23:27:38 2025
+NAMESPACE: app
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
 ```
 
 確認:
@@ -731,18 +782,17 @@ deployment.apps/api created
 ```bash
 ✗ kubectl -n app get deployments
 NAME   READY   UP-TO-DATE   AVAILABLE   AGE
-api    1/1     1            1           2d13h
+api    1/1     1            1           15s
 ```
 
 ```bash
 ✗ kubectl -n app get pods
 NAME                   READY   STATUS    RESTARTS   AGE
-api-586858cdb6-zkvkk   1/1     Running   0          2d9h
-postgres-0             1/1     Running   0          2d13h
+api-56bbd6b8bb-5jkmx   1/1     Running   0          14s
+postgres-0             1/1     Running   0          44s
 ```
 
-
-APIのPodが2つ起動しています。
+APIのPodが起動しました。
 
 ---
 
@@ -871,27 +921,23 @@ graph TB
 
 ### Port Forwardでアクセス
 
+ローカルマシンからAPIにアクセスするために、port-forwardを使用します：
+
 ```bash
-kubectl -n app port-forward svc/api 3000:80 &
+✗ kubectl -n app port-forward svc/api 3000:3000 &
+Forwarding from 127.0.0.1:3000 -> 3000
+Forwarding from [::1]:3000 -> 3000
 ```
 
 ### ヘルスチェック
 
 ```bash
-curl http://localhost:3000/healthz
-```
-
-出力:
-```json
+✗ curl http://localhost:3000/healthz
 {"status":"healthy"}
 ```
 
 ```bash
-curl http://localhost:3000/dbcheck
-```
-
-出力:
-```json
+✗ curl http://localhost:3000/dbcheck
 {"status":"ok","db":"connected"}
 ```
 
@@ -902,36 +948,18 @@ APIとデータベース接続が正常です。
 #### Todo一覧取得（空のリスト）
 
 ```bash
-curl http://localhost:3000/api/todos
-```
-
-出力:
-```json
+✗ curl -s http://localhost:3000/api/todos
 []
 ```
 
 #### Todo作成
 
 ```bash
-curl -X POST http://localhost:3000/api/todos \
+✗ curl -s -X POST http://localhost:3000/api/todos \
   -H "Content-Type: application/json" \
-  -d '{
-    "title": "k3dデプロイテスト",
-    "description": "ローカルk3d環境でのテスト",
-    "completed": false
-  }'
-```
+  -d '{"title":"Test Todo","completed":false}'
 
-レスポンス:
-```json
-{
-  "title": "k3dデプロイテスト",
-  "description": "ローカルk3d環境でのテスト",
-  "completed": false,
-  "id": 1,
-  "createdAt": "2025-11-07T04:31:50.277Z",
-  "updatedAt": "2025-11-07T04:31:50.277Z"
-}
+{"title":"Test Todo","completed":false,"description":null,"id":1,"createdAt":"2025-11-09T14:30:11.046Z","updatedAt":"2025-11-09T14:30:11.046Z"}
 ```
 
 Todo作成成功。
@@ -939,19 +967,8 @@ Todo作成成功。
 #### Todo一覧取得（作成後）
 
 ```bash
-curl http://localhost:3000/api/todos
-```
-
-レスポンス:
-```json
-[{
-  "id": 1,
-  "title": "k3dデプロイテスト",
-  "description": "ローカルk3d環境でのテスト",
-  "completed": false,
-  "createdAt": "2025-11-07T04:31:50.277Z",
-  "updatedAt": "2025-11-07T04:31:50.277Z"
-}]
+✗ curl -s http://localhost:3000/api/todos
+[{"id":1,"title":"Test Todo","description":null,"completed":false,"createdAt":"2025-11-09T14:30:11.046Z","updatedAt":"2025-11-09T14:30:11.046Z"}]
 ```
 
 データの永続化が確認できました。
