@@ -817,8 +817,8 @@ api-xxx    0/1     ImagePullBackOff   0          2m
 # ImagePullSecretを作成
 kubectl -n app create secret docker-registry dockerhub-secret \
   --docker-server=https://index.docker.io/v1/ \
-  --docker-username=yourusername \
-  --docker-password=yourpassword
+  --docker-username=<your-docker-username> \
+  --docker-password=$DOCKER_PASSWORD
 ```
 
 出力: `secret/dockerhub-secret created`
