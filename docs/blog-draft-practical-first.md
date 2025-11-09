@@ -1,8 +1,14 @@
 # なんちゃってお家kubernetes DB + API編
 
-## はじめに
+前回の環境構築編では、WindowsPCを購入してUbuntuOSをインストールするまでを行いました。
 
-このブログでは、実際に手を動かしながらKubernetesでPostgreSQLデータベースとNode.js APIアプリケーションをデプロイしていきます。
+今回はお家サーバーにkubernetesのをホストし、worker nodeとcontroll planeを立てていきたいと思います。
+worker nodeには２つのコンテナを用意し、１つのpodにDBを、もう片方にAPIサーバーを立てていこうと思います。
+なんちゃってお家kubernetesの目的は、いっぱい作っていっぱい壊しながらいっぱい学ぶことだと個人的に考えています。
+なので、まずはCRUD機能を持ったAPIを作成し、DBとの疎通を確認することをこの記事のゴールに置きます。
+
+controller plane, ノード、pod、コンテナ、サーバーなど、kubernetesには色々な入れ物に名前がついていてイメージが湧きづらいです。
+この記事を書き終えた頃には全ての入れ物に対するメンタルモデルが出来上がっていると嬉しいな。
 
 今回やること：
 - 自宅サーバー（またはローカル環境）にk3s（軽量Kubernetes）をセットアップ
@@ -11,51 +17,41 @@
 - Pod間通信の仕組みを理解
 - Todo APIの動作確認
 
-実際にデプロイしながら、「なぜこの設定が必要なのか」「どうやってPod同士が通信するのか」を解説していきます。
 
-### 対象読者
+### 環境準備
 
-- Dockerの基本を理解している方
-- Kubernetesを初めて触る、または実践的な経験を積みたい方
-- 自宅や開発環境でアプリケーションを動かしてみたい方
-
----
-
-## 1. 環境準備
-
-今回は、DBとAPIサーバーを立てていきます。自宅サーバーは1つなので、1つのノードにクラスターを作成し、そこにサービスを2つ用意します。
+今回は、DBとAPIサーバーを立てていきます。お家サーバーは物理的に1つしか存在しないので、1ノードに１つのクラスターを作成し、そこにサービスを2つ用意していきます。
 
 まずはローカル環境で動作確認をするため、**k3d**を使います。k3dは、Docker内でk3s（軽量Kubernetes）を実行できるツールです。k3sを直接インストールするとホストOSに影響を与えるため、Docker内で仮想的に動かすk3dを使用します。
+
+https://k3d.io/stable/#releases
 
 ### k3dのインストール
 
 ```bash
-brew install k3d
-```
+✗ brew install k3d
 
-インストール結果: k3d バージョン 5.8.3
+==> Pouring k3d--5.8.3.arm64_sequoia.bottle.tar.gz
+🍺  /opt/homebrew/Cellar/k3d/5.8.3: 10 files, 24.1MB
+```
 
 ### Helmのインストール
-
-Helmは、Kubernetesのパッケージマネージャーです。複雑なアプリケーションを簡単にデプロイできます。
-
+今回KubernetesのパッケージマネージャーにはHelmを使うので、インストールしていきます。
 ```bash
-brew install helm
+✗ brew install helm
+Warning: helm 3.19.0 is already installed and up-to-date.
+To reinstall 3.19.0, run:
+  brew reinstall helm
 ```
-
-インストール結果: Helm バージョン 3.19.0
 
 ### k3dクラスタの作成
 
 ```bash
-k3d cluster create todo-local \
+✗ k3d cluster create todo-local \
   --api-port 6443 \
   --port 8080:80@loadbalancer \
   --port 8443:443@loadbalancer
-```
 
-作成結果:
-```
 INFO[0000] Prep: Network
 INFO[0000] Created network 'k3d-todo-local'
 INFO[0000] Created image volume k3d-todo-local-images
@@ -66,38 +62,156 @@ INFO[0023] Starting Node 'k3d-todo-local-server-0'
 INFO[0028] Creating LoadBalancer 'k3d-todo-local-serverlb'
 INFO[0030] Cluster 'todo-local' created successfully!
 ```
+このコマンドで、下記Dockerリソースが k3dコンテナの中にcluster内に作成されました。それぞれ何なのかはわかっていません。
 
-クラスタ情報:
-- クラスタ名: `todo-local`
-- Kubernetesバージョン: v1.31.5+k3s1
+- network
+- image volume
+- node
+- load balancer
+- cluster
+
+> 調べてみた
+
+- network
+Docker内の仮想ネットワーク。k3sのServerノード、LoadBalancerノードなどの通信を行うための内部ネットワーク。
+Dockerのリソースなので、以下のようなdockerコマンドで情報を取得できる。
+```bash
+ ✗ docker network ls
+NETWORK ID     NAME                 DRIVER    SCOPE
+0094f8670bc2   k3d-todo-local       bridge    local
+
+
+```
+
+```bash
+✗ docker inspect k3d-todo-local
+[
+    {
+        "Name": "k3d-todo-local",
+        "Id": "0094f8670bc2997679ca68e15610331e29b4029f9bf6fb8dc864d2a06a30b06f",
+        "Created": "2025-11-07T00:11:11.136557843Z",
+        "Scope": "local",
+        "Driver": "bridge",
+        "EnableIPv4": true,
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": null,
+            "Config": [
+                {
+                    "Subnet": "172.20.0.0/16",
+                    "Gateway": "172.20.0.1"
+                }
+            ]
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Containers": {
+            "217ac5e368b31049de35dd011c017ad053e4228d1bd8aebd2035d9ff50f85f9f": {
+                "Name": "k3d-todo-local-serverlb",
+                "EndpointID": "db23b09742d1faf1e5504e4aad34e4f3287fe839f06e0e7f580f2939d35891c8",
+                "MacAddress": "e2:c6:2c:e4:40:e8",
+                "IPv4Address": "172.20.0.4/16",
+                "IPv6Address": ""
+            },
+            "d113dbc0f62968336d932ff279f7496e02454305e2f4f0a33ba6c3bd7a795734": {
+                "Name": "k3d-todo-local-server-0",
+                "EndpointID": "464da7481c3c8b3ea5013d1415681a7840610cd13c07cfdcc17a5fb7799d0367",
+                "MacAddress": "62:63:db:12:12:a1",
+                "IPv4Address": "172.20.0.3/16",
+                "IPv6Address": ""
+            }
+        },
+        "Options": {
+            "com.docker.network.bridge.enable_ip_masquerade": "true",
+            "com.docker.network.enable_ipv4": "true",
+            "com.docker.network.enable_ipv6": "false"
+        },
+        "Labels": {
+            "app": "k3d"
+        }
+    }
+]
+```
+
+- image volume
+
+クラスタ内のノードが共通して使うイメージキャッシュ領域
+
+https://docs.docker.jp/storage/volumes.html
+
+helm install や kubectl apply でイメージをpullするたびに、
+ここにキャッシュされ、他ノードでも再利用可能。
+
+```bash
+✗ docker volume ls
+DRIVER    VOLUME NAME
+local     k3d-todo-local-images
+```
+
+- node
+
+kubernetesのノード。中でk3sが動くコンテナのこと。
+https://docs.docker.jp/engine/reference/commandline/node.html
+
+ここでは server-0 として、control-plane（マスター）ノードを作っている。
+
+追加すれば agent-0, agent-1 といった worker ノードも増やせる。
+
+```bash
+✗ docker ps
+CONTAINER ID   IMAGE                                          COMMAND                   CREATED       STATUS                   PORTS
+d113dbc0f629   rancher/k3s:v1.31.5-k3s1                       "/bin/k3d-entrypoint…"    2 days ago    Up 2 days                k3d-todo-local-server-0
+```
+- load balancer
+
+ローカルマシンのポート（8080, 8443など）を、クラスタ内部のService（80, 443）へ転送するためのサービス。
+外界とクラスタをつなぐ玄関口で、こんなふうなネットワークフローになっている。
+
+```
+(localhost:8080) → [k3d-serverlbコンテナ] → (k3d network) → [k3s APIやService]
+```
+
+- cluster
+
+k3dが論理的にまとめた「k3sノード群」の集合。Dockerの中に作られたミニKubernetesクラスタ。
+今まで出てきたnetwork, volume, nodes, loadbalancer をまとめた単位。
+https://k3d.io/stable/usage/commands/k3d_cluster/
+
+```bash
+ k3d cluster list                                                                                      
+NAME         SERVERS   AGENTS   LOADBALANCER
+todo-local   1/1       0/0      true
+```
+
 
 ### 環境確認
+現在kubectlがアクセスしているcontextが先ほど作成したclusterのcontextをポイントしているのかを確認しておきます。
+ポイント先が違う場合、期待するリソースを作成できなくなってしまうのでポイント先のcontext確認は重要です。
 
 ```bash
-# Context確認
-kubectl config current-context
-```
+✗ kubectl config current-context
+k3d-todo-local
 
-出力: `k3d-todo-local`
+``
+先ほど作成したclusterを指すことができています。
 
-```bash
-# Node確認
-kubectl get nodes
-```
-
-出力:
-```
-NAME                      STATUS   ROLES                  AGE   VERSION
-k3d-todo-local-server-0   Ready    control-plane,master   1m    v1.31.5+k3s1
-```
+nodeも確認します。
 
 ```bash
-# StorageClass確認
-kubectl get storageclass
+✗ kubectl get nodes
+NAME                      STATUS   ROLES                  AGE    VERSION
+k3d-todo-local-server-0   Ready    control-plane,master   1m   v1.31.5+k3s1
 ```
 
-出力:
-```
+storage classも確認しておきます。
+```bash
+✗ kubectl get storageclass
 NAME                   PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
 local-path (default)   rancher.io/local-path   Delete          WaitForFirstConsumer   false                  1m
 ```
@@ -106,87 +220,54 @@ StorageClassが`local-path`になっています。これはk3sのデフォル�
 
 ### Namespaceの作成
 
-Kubernetesでは、リソースを論理的に分離するためにNamespaceを使います。今回は`app`という名前のNamespaceを作成します。
+Kubernetesでは、リソースを論理的に分離するためにNamespaceを使います。今回はアプリケーションレイヤーのリソースという意味で`app`という名前のNamespaceを作成することにします。
 
 ```bash
-kubectl create namespace app
+✗ kubectl create namespace app
+namespace/app created
 ```
-
-出力: `namespace/app created`
 
 ```bash
 # 確認
 kubectl get namespaces
+NAME              STATUS   AGE
+app               Active   2d9h
+default           Active   2d9h
+kube-node-lease   Active   2d9h
+kube-public       Active   2d9h
+kube-system       Active   2d9h
 ```
 
-`app` namespaceが作成されました。
+これで、アプリケーションをホストするインフラを構築することができました。
+kubeadmを使う場合と違い、
 
----
+参考：https://qiita.com/dyoshiha/items/0e5a4e9ed7369e97f190
 
 ## 2. アプリケーションの準備
+インフラは出来上がったので、kubernetes podにマウントするimageを作成していこうと思います。
+自分の慣れている言語を使いたいので、言語はNode、imageにbuildしていきます。
+
+TODOリストを作成・参照・更新・削除できるAPIです。入門で作成するような一般的な構成です。一般的なので、詳細の処理はここでは説明しませんが、リポジトリだけ置いておきます。
+https://github.com/subaru-hello/todo-k3s/tree/main/packages/api
+
+
+
 
 ### Node.js APIの実装
 
-まずはNodejsから始めます。TODOをCRUDできるサーバーを立てます。今回は**Hono**というフレームワークを使用します。ORMには**TypeORM**を使います。
+まずはAPIサーバの構築始めます。TODOをCRUDできるサーバーを立てます。今回は**Hono**というフレームワークを使用します。ORMには**TypeORM**を使います。
 
-実装例（`packages/api/src/index.ts`）:
 
-```typescript
-import { Hono } from 'hono'
-import { AppDataSource } from './db/dataSource'
-import { todoRoutes } from './routes/todos'
-
-const app = new Hono()
-
-// データベース接続
-AppDataSource.initialize()
-  .then(() => {
-    console.log('Database connected successfully')
-  })
-  .catch((error) => console.error('Error connecting to database:', error))
-
-// ルーティング
-app.route('/api/todos', todoRoutes)
-app.get('/healthz', (c) => c.json({ status: 'healthy' }))
-
-export default app
-```
 
 詳細の実装はリポジトリを参照してください。
 
-### Dockerfileの作成とイメージビルド
+### Dockerfileのイメージビルド
 
-Dockerfile（`packages/api/Dockerfile`）:
-
-```dockerfile
-# ビルダーステージ
-FROM node:24-alpine AS builder
-WORKDIR /app
-RUN npm install -g pnpm
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-COPY . .
-RUN pnpm build
-
-# 本番ステージ（Distroless）
-FROM gcr.io/distroless/nodejs20-debian12 AS production
-WORKDIR /app
-COPY --from=builder /app/dist /app/dist
-COPY --from=builder /app/node_modules /app/node_modules
-COPY --from=builder /app/package.json /app/package.json
-USER nonroot
-CMD ["dist/index.js"]
-```
-
-イメージビルド:
-
+では、実装したAPIからイメージをビルドしていきます。
 ```bash
-cd packages/api
-docker build -t docker.io/yourusername/todo-api:sha-e432059 --target production .
-```
+✗ cd packages/api
+✗ docker build -t docker.io/yourusername/todo-api:sha-e432059 --target production .
 
-ビルド結果:
-```
 [+] Building 8.5s (15/15) FINISHED
  => [internal] load build definition from Dockerfile
  => [builder 1/6] FROM docker.io/library/node:24-alpine
@@ -203,18 +284,13 @@ docker build -t docker.io/yourusername/todo-api:sha-e432059 --target production 
  => => naming to docker.io/yourusername/todo-api:sha-e432059
 ```
 
-イメージビルド成功（ビルド時間: 約8秒）
-
 ### k3dクラスタへイメージインポート
 
 ローカル開発では、private registryへのpushを省略し、直接k3dへインポートします。
 
 ```bash
-k3d image import docker.io/yourusername/todo-api:sha-e432059 -c todo-local
-```
+✗ k3d image import docker.io/yourusername/todo-api:sha-e432059 -c todo-local
 
-インポート結果:
-```
 INFO[0000] Importing image(s) into cluster 'todo-local'
 INFO[0004] Successfully imported 1 image(s) into 1 cluster(s)
 ```
