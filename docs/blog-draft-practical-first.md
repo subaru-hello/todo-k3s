@@ -21,6 +21,7 @@ controller plane, ノード、pod、コンテナ、サーバーなど、kubernet
 ### 環境準備
 
 今回は、DBとAPIサーバーを立てていきます。お家サーバーは物理的に1つしか存在しないので、1ノードに１つのクラスターを作成し、そこにサービスを2つ用意していきます。
+そして、負荷分散をしてみたいので、APIサーバーは２つ立ててみようと思います。
 
 まずはローカル環境で動作確認をするため、**k3d**を使います。k3dは、Docker内でk3s（軽量Kubernetes）を実行できるツールです。k3sを直接インストールするとホストOSに影響を与えるため、Docker内で仮想的に動かすk3dを使用します。
 
@@ -47,20 +48,37 @@ To reinstall 3.19.0, run:
 ### k3dクラスタの作成
 
 ```bash
-✗ k3d cluster create todo-local \
-  --api-port 6443 \
-  --port 8080:80@loadbalancer \
-  --port 8443:443@loadbalancer
-
-INFO[0000] Prep: Network
-INFO[0000] Created network 'k3d-todo-local'
-INFO[0000] Created image volume k3d-todo-local-images
-INFO[0000] Creating node 'k3d-todo-local-server-0'
-INFO[0009] Pulling image 'ghcr.io/k3d-io/k3d-tools:5.8.3'
-INFO[0011] Pulling image 'docker.io/rancher/k3s:v1.31.5-k3s1'
-INFO[0023] Starting Node 'k3d-todo-local-server-0'
-INFO[0028] Creating LoadBalancer 'k3d-todo-local-serverlb'
-INFO[0030] Cluster 'todo-local' created successfully!
+k3d cluster create todo-local \
+    --api-port 6443 \
+    --port 8080:80@loadbalancer \
+    --port 8443:443@loadbalancer \
+    --servers 1 \
+    --agents 2
+INFO[0000] portmapping '8443:443' targets the loadbalancer: defaulting to [servers:*:proxy agents:*:proxy] 
+INFO[0000] portmapping '8080:80' targets the loadbalancer: defaulting to [servers:*:proxy agents:*:proxy] 
+INFO[0000] Prep: Network                                
+INFO[0000] Created network 'k3d-todo-local'             
+INFO[0000] Created image volume k3d-todo-local-images   
+INFO[0000] Starting new tools node...                   
+INFO[0000] Starting node 'k3d-todo-local-tools'         
+INFO[0001] Creating node 'k3d-todo-local-server-0'      
+INFO[0001] Creating node 'k3d-todo-local-agent-0'       
+INFO[0001] Creating node 'k3d-todo-local-agent-1'       
+INFO[0001] Creating LoadBalancer 'k3d-todo-local-serverlb' 
+INFO[0001] Using the k3d-tools node to gather environment information 
+INFO[0001] Starting new tools node...                   
+INFO[0002] Starting node 'k3d-todo-local-tools'         
+INFO[0003] Starting cluster 'todo-local'                
+INFO[0003] Starting servers...                          
+INFO[0003] Starting node 'k3d-todo-local-server-0'      
+INFO[0007] Starting agents...                           
+INFO[0007] Starting node 'k3d-todo-local-agent-1'       
+INFO[0007] Starting node 'k3d-todo-local-agent-0'       
+INFO[0016] Starting helpers...                          
+INFO[0017] Starting node 'k3d-todo-local-serverlb'      
+INFO[0023] Injecting records for hostAliases (incl. host.k3d.internal) and for 5 network members into CoreDNS configmap... 
+INFO[0025] Cluster 'todo-local' created successfully!   
+INFO[0025] You can now use it like this:  
 ```
 このコマンドで、下記Dockerリソースが k3dコンテナの中にcluster内に作成されました。それぞれ何なのかはわかっていません。
 
@@ -88,8 +106,8 @@ NETWORK ID     NAME                 DRIVER    SCOPE
 [
     {
         "Name": "k3d-todo-local",
-        "Id": "0094f8670bc2997679ca68e15610331e29b4029f9bf6fb8dc864d2a06a30b06f",
-        "Created": "2025-11-07T00:11:11.136557843Z",
+        "Id": "c5c893731c87ce3c77864d8d0934750a391f27c26963309f26558dfcd6822f54",
+        "Created": "2025-11-09T13:41:42.037066762Z",
         "Scope": "local",
         "Driver": "bridge",
         "EnableIPv4": true,
@@ -112,18 +130,39 @@ NETWORK ID     NAME                 DRIVER    SCOPE
         },
         "ConfigOnly": false,
         "Containers": {
-            "217ac5e368b31049de35dd011c017ad053e4228d1bd8aebd2035d9ff50f85f9f": {
-                "Name": "k3d-todo-local-serverlb",
-                "EndpointID": "db23b09742d1faf1e5504e4aad34e4f3287fe839f06e0e7f580f2939d35891c8",
-                "MacAddress": "e2:c6:2c:e4:40:e8",
+            "0a47132a69ab4c0d620f641a14f42e0880b75b541927b3fcb126080434493b13": {
+                "Name": "k3d-todo-local-tools",
+                "EndpointID": "8a083d7ff82bbde807ddcd272d7ce19b023abe1321d22b0e3b02cc72256d8dd2",
+                "MacAddress": "ae:de:58:b6:2a:68",
+                "IPv4Address": "172.20.0.2/16",
+                "IPv6Address": ""
+            },
+            "0e9f4f017934ca998e3776990f7527b3596de9ffc933c52129c450632fc73f4a": {
+                "Name": "k3d-todo-local-agent-1",
+                "EndpointID": "2dd420980901ab6967bfcfe059ddecb0e509a418a367d0d3bd36e2051646fedc",
+                "MacAddress": "8a:3e:aa:11:82:d9",
                 "IPv4Address": "172.20.0.4/16",
                 "IPv6Address": ""
             },
-            "d113dbc0f62968336d932ff279f7496e02454305e2f4f0a33ba6c3bd7a795734": {
+            "39fa6e937c63741611090f5076277abc6ab1c744632d2b173de6e554b97d1fa7": {
+                "Name": "k3d-todo-local-agent-0",
+                "EndpointID": "9740bac3be57e5dda73a9037659964b08fbb68beb7132519e77fb34b250020bb",
+                "MacAddress": "be:ec:7b:11:d4:e2",
+                "IPv4Address": "172.20.0.5/16",
+                "IPv6Address": ""
+            },
+            "a444ceaffa1ffc0559edb8af119622aa3d0114104cce0e574224d7eecb84ee00": {
                 "Name": "k3d-todo-local-server-0",
-                "EndpointID": "464da7481c3c8b3ea5013d1415681a7840610cd13c07cfdcc17a5fb7799d0367",
-                "MacAddress": "62:63:db:12:12:a1",
+                "EndpointID": "67d8f58e5bf1c6eb115f86fd3f2d6e685ac167343dfa5ea982ef7bd48cffc3b2",
+                "MacAddress": "ea:5c:6e:21:a6:d6",
                 "IPv4Address": "172.20.0.3/16",
+                "IPv6Address": ""
+            },
+            "b2c8b1be1fde76697d3fcfccfb13e6ce9d752fb70548fc5c6d94e1c523b9362e": {
+                "Name": "k3d-todo-local-serverlb",
+                "EndpointID": "a65735f24fe706a16bd30d9dec730117079acdff8568cdd316416983817f395e",
+                "MacAddress": "f2:19:85:61:08:01",
+                "IPv4Address": "172.20.0.6/16",
                 "IPv6Address": ""
             }
         },
@@ -137,6 +176,7 @@ NETWORK ID     NAME                 DRIVER    SCOPE
         }
     }
 ]
+
 ```
 
 - image volume
@@ -166,7 +206,11 @@ https://docs.docker.jp/engine/reference/commandline/node.html
 ```bash
 ✗ docker ps
 CONTAINER ID   IMAGE                                          COMMAND                   CREATED       STATUS                   PORTS
-d113dbc0f629   rancher/k3s:v1.31.5-k3s1                       "/bin/k3d-entrypoint…"    2 days ago    Up 2 days                k3d-todo-local-server-0
+0a47132a69ab   ghcr.io/k3d-io/k3d-tools:5.8.3                 "/app/k3d-tools noop"     2 minutes ago   Up 2 minutes           k3d-todo-local-tools
+b2c8b1be1fde   ghcr.io/k3d-io/k3d-proxy:5.8.3                 "/bin/sh -c nginx-pr…"    2 minutes ago   Up 2 minutes             0.0.0.0:6443->6443/tcp, 0.0.0.0:8080->80/tcp, 0.0.0.0:8443->443/tcp                                                         k3d-todo-local-serverlb
+0e9f4f017934   rancher/k3s:v1.31.5-k3s1                       "/bin/k3d-entrypoint…"    2 minutes ago   Up 2 minutes           k3d-todo-local-agent-1
+39fa6e937c63   rancher/k3s:v1.31.5-k3s1                       "/bin/k3d-entrypoint…"    2 minutes ago   Up 2 minutes           k3d-todo-local-agent-0
+a444ceaffa1f   rancher/k3s:v1.31.5-k3s1                       "/bin/k3d-entrypoint…"    2 minutes ago   Up 2 minutes           k3d-todo-local-server-0
 ```
 - load balancer
 
@@ -184,9 +228,9 @@ k3dが論理的にまとめた「k3sノード群」の集合。Dockerの中に�
 https://k3d.io/stable/usage/commands/k3d_cluster/
 
 ```bash
- k3d cluster list                                                                                      
+✗  k3d cluster list    
 NAME         SERVERS   AGENTS   LOADBALANCER
-todo-local   1/1       0/0      true
+todo-local   1/1       2/2      true
 ```
 
 
@@ -205,15 +249,17 @@ nodeも確認します。
 
 ```bash
 ✗ kubectl get nodes
-NAME                      STATUS   ROLES                  AGE    VERSION
-k3d-todo-local-server-0   Ready    control-plane,master   1m   v1.31.5+k3s1
+NAME                      STATUS   ROLES                  AGE     VERSION
+k3d-todo-local-agent-0    Ready    <none>                 3m43s   v1.31.5+k3s1
+k3d-todo-local-agent-1    Ready    <none>                 3m44s   v1.31.5+k3s1
+k3d-todo-local-server-0   Ready    control-plane,master   3m53s   v1.31.5+k3s1
 ```
 
 storage classも確認しておきます。
 ```bash
 ✗ kubectl get storageclass
 NAME                   PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
-local-path (default)   rancher.io/local-path   Delete          WaitForFirstConsumer   false                  1m
+local-path (default)   rancher.io/local-path   Delete          WaitForFirstConsumer   false                  4m5s
 ```
 
 StorageClassが`local-path`になっています。これはk3sのデフォルトで、後ほどPostgreSQLのデータを永続化するときに使用します。
@@ -228,18 +274,18 @@ namespace/app created
 ```
 
 ```bash
-# 確認
-kubectl get namespaces
+✗ kubectl get namespaces
 NAME              STATUS   AGE
-app               Active   2d9h
-default           Active   2d9h
-kube-node-lease   Active   2d9h
-kube-public       Active   2d9h
-kube-system       Active   2d9h
+app               Active   7s
+default           Active   4m36s
+kube-node-lease   Active   4m36s
+kube-public       Active   4m36s
+kube-system       Active   4m36s
 ```
 
 これで、アプリケーションをホストするインフラを構築することができました。
-kubeadmを使う場合と違い、
+kubeadmを使う場合と違い、k3dはCNIやStorageClassをデフォルトで用意してくれるので、セットアップを楽に完了することができます。
+kubernetesの用語に慣れてきたら、kubeadmも挑戦してみます。
 
 参考：https://qiita.com/dyoshiha/items/0e5a4e9ed7369e97f190
 
@@ -289,10 +335,17 @@ https://github.com/subaru-hello/todo-k3s/tree/main/packages/api
 ローカル開発では、private registryへのpushを省略し、直接k3dへインポートします。
 
 ```bash
-✗ k3d image import docker.io/yourusername/todo-api:sha-e432059 -c todo-local
-
-INFO[0000] Importing image(s) into cluster 'todo-local'
-INFO[0004] Successfully imported 1 image(s) into 1 cluster(s)
+✗ k3d image import docker.io/subaru88/todo-api:sha-e432059 -c todo-local
+INFO[0000] Importing image(s) into cluster 'todo-local' 
+INFO[0000] Saving 1 image(s) from runtime...            
+INFO[0001] Importing images into nodes...               
+INFO[0001] Importing images from tarball '/k3d/images/k3d-todo-local-images-20251109224958.tar' into node 'k3d-todo-local-server-0'... 
+INFO[0001] Importing images from tarball '/k3d/images/k3d-todo-local-images-20251109224958.tar' into node 'k3d-todo-local-agent-1'... 
+INFO[0001] Importing images from tarball '/k3d/images/k3d-todo-local-images-20251109224958.tar' into node 'k3d-todo-local-agent-0'... 
+INFO[0004] Removing the tarball(s) from image volume... 
+INFO[0005] Removing k3d-tools node...                   
+INFO[0005] Successfully imported image(s)               
+INFO[0005] Successfully imported 1 image(s) into 1 cluster(s) 
 ```
 
 イメージがk3dクラスタ内で使用可能になりました。
@@ -324,20 +377,21 @@ graph TB
     PVC1 -->|バインド| PV1
 ```
 
-これに対して、後ほどデプロイするNode.js APIは**Deployment**を使います。Deploymentはステートレスなアプリケーション向けで、Podが再起動しても状態を保持する必要がありません。
+これに対して、後ほどデプロイするNode.js APIでは**Deployment**を使います。Deploymentはステートレスなアプリケーション向けで、Podが再起動しても状態を保持する必要がありません。
 
 ### Secretの作成
 
 データベースの認証情報をSecretとして保存します。Secretは、パスワードやAPIキーなどの機密情報を安全に保存するためのKubernetesリソースです。
 
 ```bash
-kubectl -n app create secret generic postgres-secret \
-  --from-literal=POSTGRES_USER=myuser \
-  --from-literal=POSTGRES_PASSWORD=mypassword \
+✗ kubectl -n app create secret generic postgres-secret \
+  --from-literal=POSTGRES_USER=localuser \
+  --from-literal=POSTGRES_PASSWORD=password \
   --from-literal=POSTGRES_DB=todos
+
+secret/postgres-secret created
 ```
 
-出力: `secret/postgres-secret created`
 
 ### StatefulSetのデプロイ
 
@@ -417,11 +471,8 @@ spec:
 デプロイ実行:
 
 ```bash
-kubectl apply -f postgres-statefulset.yaml
-```
+✗　kubectl apply -f postgres-statefulset.yaml
 
-出力:
-```
 service/postgres created
 statefulset.apps/postgres created
 ```
@@ -429,28 +480,33 @@ statefulset.apps/postgres created
 確認:
 
 ```bash
-kubectl -n app get statefulset
-kubectl -n app get pods
-kubectl -n app get pvc
-```
+ ✗ kubectl -n app get statefulset
+NAME       READY   AGE
+postgres   1/1     2d11h
 
-Pod状態:
-```
-NAME         READY   STATUS    RESTARTS   AGE
-postgres-0   1/1     Running   0          30s
-```
+✗ kubectl -n app get pods
+NAME                   READY   STATUS    RESTARTS   AGE
+api-586858cdb6-zkvkk   1/1     Running   0          2d6h
+postgres-0             1/1     Running   0          2d11h
 
-PVC状態:
-```
-NAME                     STATUS   VOLUME                                     CAPACITY   STORAGECLASS
-postgres-data-postgres-0 Bound    pvc-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx   5Gi        local-path
+✗ kubectl -n app get pvc
+NAME                STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+pgdata-postgres-0   Bound    pvc-b29c634e-f146-4a94-a116-f59862b43edf   5Gi        RWO            local-path     <unset>                 2d11h
 ```
 
 PostgreSQLが正常に起動し、PVCもBindされました。
 
 ### PVC（PersistentVolumeClaim）とは？
 
-**PVC**は、永続的なストレージを要求するためのリソースです。
+永続的なストレージを要求するためのリソース。
+https://kubernetes.io/ja/docs/concepts/storage/persistent-volumes/
+
+PVCを知るためには、Volumeの概念を知る必要があると公式Docに書いてありまました。なので、一読してみます。
+
+https://kubernetes.io/ja/docs/concepts/storage/volumes/
+
+
+
 
 ```mermaid
 graph TB
@@ -463,6 +519,7 @@ graph TB
     PVC -->|バインド| PV
     SC -->|自動作成| PV
 ```
+仕組みをまとめると以下の通りになるようです。
 
 仕組み:
 1. **PVC作成**: アプリケーションが「5Giのストレージが欲しい」と要求
@@ -476,24 +533,80 @@ graph TB
 
 ```bash
 # PostgreSQL Podのログ確認
-kubectl -n app logs postgres-0
-```
+ ✗ kubectl -n app logs postgres-0
+The files belonging to this database system will be owned by user "postgres".
+This user must also own the server process.
 
-出力:
+The database cluster will be initialized with locale "en_US.utf8".
+The default database encoding has accordingly been set to "UTF8".
+The default text search configuration will be set to "english".
+
+Data page checksums are disabled.
+
+fixing permissions on existing directory /var/lib/postgresql/data ... ok
+creating subdirectories ... ok
+selecting dynamic shared memory implementation ... posix
+selecting default max_connections ... 100
+selecting default shared_buffers ... 128MB
+selecting default time zone ... UTC
+creating configuration files ... ok
+running bootstrap script ... ok
+sh: locale: not found
+2025-11-07 00:21:14.222 UTC [36] WARNING:  no usable system locales were found
+performing post-bootstrap initialization ... ok
+syncing data to disk ... ok
+
+
+Success. You can now start the database server using:
+
+    pg_ctl -D /var/lib/postgresql/data -l logfile start
+
+initdb: warning: enabling "trust" authentication for local connections
+initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+waiting for server to start....2025-11-07 00:21:14.592 UTC [42] LOG:  starting PostgreSQL 16.10 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 14.2.0) 14.2.0, 64-bit
+2025-11-07 00:21:14.593 UTC [42] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2025-11-07 00:21:14.595 UTC [45] LOG:  database system was shut down at 2025-11-07 00:21:14 UTC
+2025-11-07 00:21:14.597 UTC [42] LOG:  database system is ready to accept connections
+ done
+server started
+CREATE DATABASE
+
+
+/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+
+waiting for server to shut down....2025-11-07 00:21:14.710 UTC [42] LOG:  received fast shutdown request
+2025-11-07 00:21:14.711 UTC [42] LOG:  aborting any active transactions
+2025-11-07 00:21:14.712 UTC [42] LOG:  background worker "logical replication launcher" (PID 48) exited with exit code 1
+2025-11-07 00:21:14.712 UTC [43] LOG:  shutting down
+2025-11-07 00:21:14.712 UTC [43] LOG:  checkpoint starting: shutdown immediate
+2025-11-07 00:21:14.730 UTC [43] LOG:  checkpoint complete: wrote 926 buffers (5.7%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.005 s, sync=0.013 s, total=0.019 s; sync files=301, longest=0.005 s, average=0.001 s; distance=4272 kB, estimate=4272 kB; lsn=0/191E8E0, redo lsn=0/191E8E0
+2025-11-07 00:21:14.732 UTC [42] LOG:  database system is shut down
+ done
+server stopped
+
+PostgreSQL init process complete; ready for start up.
+
+2025-11-07 00:21:14.820 UTC [1] LOG:  starting PostgreSQL 16.10 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 14.2.0) 14.2.0, 64-bit
+2025-11-07 00:21:14.821 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+2025-11-07 00:21:14.821 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+2025-11-07 00:21:14.821 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2025-11-07 00:21:14.823 UTC [58] LOG:  database system was shut down at 2025-11-07 00:21:14 UTC
+2025-11-07 00:21:14.825 UTC [1] LOG:  database system is ready to accept connections
+2025-11-07 00:26:14.889 UTC [56] LOG:  checkpoint starting: time
+2025-11-07 00:26:19.153 UTC [56] LOG:  checkpoint complete: wrote 45 buffers (0.3%); 0 WAL file(s) added, 0 removed, 0 recycled; write=4.258 s, sync=0.003 s, total=4.264 s; sync files=12, longest=0.003 s, average=0.001 s; distance=260 kB, estimate=260 kB; lsn=0/195FBC0, redo lsn=0/195FB88
+2025-11-07 04:33:32.351 UTC [56] LOG:  checkpoint starting: time
+2025-11-07 04:33:37.689 UTC [56] LOG:  checkpoint complete: wrote 53 buffers (0.3%); 0 WAL file(s) added, 0 removed, 0 recycled; write=5.326 s, sync=0.005 s, total=5.340 s; sync files=41, longest=0.002 s, average=0.001 s; distance=168 kB, estimate=251 kB; lsn=0/1989DE0, redo lsn=0/1989DA8
+
 ```
-PostgreSQL Database directory appears to contain a database; Skipping initialization
-...
-LOG:  database system is ready to accept connections
-```
+### PostgreSQL接続テスト
 
 ```bash
-# PostgreSQL接続テスト
-kubectl -n app exec -it postgres-0 -- psql -U myuser -d todos -c "\dt"
+✗   kubectl -n app exec -it postgres-0 -- psql -U localuser -d todos -c "\dt"
+         List of relations
+ Schema | Name  | Type  |   Owner   
+--------+-------+-------+-----------
+ public | todos | table | localuser
 ```
-
-出力: データベース接続成功
-
-PostgreSQLが正常に動作しています。
 
 ---
 
@@ -527,6 +640,7 @@ StatefulSetと違い、Podは特定の順序なく起動し、どのPodも同じ
 
 api-deployment.yaml:
 
+（リポジトリへのリンクへ変更する）
 ```yaml
 apiVersion: v1
 kind: Service
@@ -606,11 +720,8 @@ spec:
 デプロイ実行:
 
 ```bash
-kubectl apply -f api-deployment.yaml
-```
+✗  kubectl apply -f api-deployment.yaml
 
-出力:
-```
 service/api created
 deployment.apps/api created
 ```
@@ -618,17 +729,18 @@ deployment.apps/api created
 確認:
 
 ```bash
-kubectl -n app get deployments
-kubectl -n app get pods
+✗ kubectl -n app get deployments
+NAME   READY   UP-TO-DATE   AVAILABLE   AGE
+api    1/1     1            1           2d13h
 ```
 
-Pod状態:
-```
+```bash
+✗ kubectl -n app get pods
 NAME                   READY   STATUS    RESTARTS   AGE
-api-586858cdb6-zkvkk   1/1     Running   0          39s
-api-586858cdb6-abc123  1/1     Running   0          39s
-postgres-0             1/1     Running   0          5m
+api-586858cdb6-zkvkk   1/1     Running   0          2d9h
+postgres-0             1/1     Running   0          2d13h
 ```
+
 
 APIのPodが2つ起動しています。
 
