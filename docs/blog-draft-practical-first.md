@@ -17,17 +17,485 @@ controller plane, ノード、pod、コンテナ、サーバーなど、kubernet
 - Pod間通信の仕組みを理解
 - Todo APIの動作確認
 
+## 環境について
 
-### 環境準備
+この記事では、2つの異なる環境でのデプロイ方法を説明します。
+
+### ローカル開発環境（k3d）
+
+ローカル開発では**k3d**を使用します。k3dは、Docker内でk3sクラスターを動かすツールです。
+
+**k3dのメリット：**
+- ホストOSを汚さず、Docker内で隔離された環境を作成
+- `k3d cluster delete`で簡単に環境をリセット可能
+- 複数のクラスターを同時に管理できる
+- ローカルイメージのインポートが簡単
+
+```bash
+# k3dでクラスター作成
+k3d cluster create todo-local --agents 1
+
+# k3dでクラスター削除
+k3d cluster delete todo-local
+```
+
+参考: [k3d公式ドキュメント](https://k3d.io/)
+
+### リモートサーバー環境（k3s直接インストール）
+
+リモートの本番サーバーでは、**k3sを直接インストール**して使用します。
+
+```bash
+# k3sを直接インストール
+curl -sfL https://get.k3s.io | sh -
+
+# k3sの状態確認
+sudo systemctl status k3s
+```
+
+参考: [k3s公式ドキュメント](https://docs.k3s.io/)
+
+### どちらを選ぶべきか
+
+| 環境 | 推奨方法 | 理由 |
+|------|---------|------|
+| ローカル開発 | k3d | 環境のリセットが容易、複数クラスター管理 |
+| リモートサーバー | k3s直接 | Dockerオーバーヘッドなし、本番運用向き |
+
+**重要:** どちらもk3sベースなので、**Helmチャートやマニフェストファイルは全く同じものを使用できます**。環境の違いは、k3sの実行方法（Docker内 vs 直接）だけです。
+
+## 実装予定のサーバー全体像
+
+### ローカル環境（k3d）の構成
+
+ローカル開発環境では、Docker内でk3dを使ってKubernetesクラスターを実行します。
+
+```mermaid
+graph TB
+    subgraph "ホストマシン（開発PC）"
+        Docker[Docker Engine]
+        subgraph "k3dコンテナ"
+            K3s[k3s Cluster]
+            subgraph "Namespace: app"
+                API[API<br/>Deployment<br/>replicas: 1]
+                DB[PostgreSQL<br/>StatefulSet<br/>replicas: 1]
+            end
+        end
+    end
+```
+
+階層構造：
+
+```mermaid
+graph LR
+    Host[ホストマシン] --> Docker[Docker]
+    Docker --> k3d[k3dコンテナ]
+    k3d --> K8s[Kubernetes<br/>k3s]
+    K8s --> NS[Namespace: app]
+    NS --> API[API Deployment<br/>replicas: 1]
+    NS --> DB[PostgreSQL StatefulSet<br/>replicas: 1]
+    API --> SVC_DB[postgres Service]
+    SVC_DB --> DB
+```
+
+**ローカル環境の特徴：**
+- Docker内で隔離された環境
+- `kubectl port-forward`でアクセス
+- 環境のリセットが容易
+
+### リモート環境（k3s直接）の構成
+
+リモートサーバーでは、ホストOS上にk3sを直接インストールして実行します。
+
+```mermaid
+graph TB
+    subgraph "リモートサーバー（Ubuntu）"
+        K3s[k3s Cluster<br/>直接インストール]
+        subgraph "Namespace: app"
+            API[API<br/>Deployment<br/>replicas: 2]
+            DB[PostgreSQL<br/>StatefulSet<br/>replicas: 1]
+            Tunnel[Cloudflare Tunnel]
+        end
+    end
+    Internet[インターネット] -->|HTTPS| Tunnel
+    Tunnel -->|内部通信| API
+```
+
+階層構造：
+
+```mermaid
+graph LR
+    Host[リモートサーバー] --> K8s[Kubernetes<br/>k3s直接]
+    K8s --> NS[Namespace: app]
+    NS --> API[API Deployment<br/>replicas: 2]
+    NS --> DB[PostgreSQL StatefulSet<br/>replicas: 1]
+    NS --> Tunnel[Cloudflare Tunnel]
+    API --> SVC_DB[postgres Service]
+    SVC_DB --> DB
+    Internet[インターネット] --> Tunnel
+```
+
+**リモート環境の特徴：**
+- ホストOSに直接インストール
+- Cloudflare Tunnelで外部公開
+- 本番運用向けの高いレプリカ数
+
+### Kubernetesコンポーネント
+
+#### Pod
+
+Podは、Kubernetesで最小のデプロイ単位です。1つ以上のコンテナをグループ化し、共有ストレージとネットワークを持ちます。
+
+```mermaid
+graph TB
+    subgraph Pod
+        C1[Container 1<br/>Node.js App]
+        C2[Container 2<br/>Sidecar]
+    end
+    V[Shared Volume]
+    N[Shared Network<br/>192.168.1.10]
+
+    Pod --> V
+    Pod --> N
+```
+
+Pod内のコンテナは同じIPアドレスを共有し、localhostで通信できます。
+
+参考: [Kubernetes Pod](https://kubernetes.io/ja/docs/concepts/workloads/pods/)
+
+#### Deployment（ReplicaSet）
+
+Deploymentは、ステートレスなアプリケーションを管理します。指定した数のPodレプリカを維持し、ローリングアップデートやロールバックをサポートします。
+
+```mermaid
+graph TB
+    D[Deployment<br/>api]
+    RS[ReplicaSet<br/>api-7b674f64f4]
+    P1[Pod<br/>api-xxx]
+    P2[Pod<br/>api-yyy]
+
+    D -->|管理| RS
+    RS -->|作成| P1
+    RS -->|作成| P2
+```
+
+DeploymentはReplicaSetを管理し、ReplicaSetが実際のPodを作成・維持します。これにより、Pod障害時の自動復旧やスケーリングが可能になります。
+
+参考: [Kubernetes Deployment](https://kubernetes.io/ja/docs/concepts/workloads/controllers/deployment/)
+
+#### StatefulSet
+
+StatefulSetは、ステートフルなアプリケーション（データベースなど）を管理します。各Podに固定された識別子と永続ストレージを提供します。
+
+```mermaid
+graph TB
+    SS[StatefulSet<br/>postgres]
+    P1[Pod<br/>postgres-0]
+    PVC1[PVC<br/>postgres-data-0]
+    PV1[PV<br/>local-path-xxx]
+
+    SS -->|作成| P1
+    P1 -->|マウント| PVC1
+    PVC1 -->|バインド| PV1
+```
+
+StatefulSetのPodは、`postgres-0`のように順序付けされた名前を持ち、再起動後も同じストレージに接続されます。
+
+参考: [Kubernetes StatefulSet](https://kubernetes.io/ja/docs/concepts/workloads/controllers/statefulset/)
+
+#### Service（ClusterIP）
+
+Serviceは、Pod群への安定したネットワークアクセスを提供します。ClusterIPは、クラスター内部からのみアクセス可能なIPアドレスを割り当てます。
+
+```mermaid
+graph LR
+    subgraph Cluster
+        S[Service: api<br/>ClusterIP: 10.43.132.9<br/>DNS: api.app.svc.cluster.local]
+        P1[Pod: api-xxx<br/>IP: 10.42.0.15]
+        P2[Pod: api-yyy<br/>IP: 10.42.0.16]
+    end
+
+    Client[他のPod] -->|api.app.svc.cluster.local:80| S
+    S -->|ロードバランス| P1
+    S -->|ロードバランス| P2
+```
+
+Serviceは、Pod IPが変わっても同じDNS名でアクセスできるようにし、複数のPodに対してロードバランシングを提供します。
+
+参考: [Kubernetes Service](https://kubernetes.io/ja/docs/concepts/services-networking/service/)
+
+#### Service（NodePort）
+
+NodePortは、クラスター外部からのアクセスを可能にするServiceタイプです。各ノードの指定ポートで待ち受けます。
+
+```mermaid
+graph TB
+    External[外部ネットワーク]
+    N1[Node 1<br/>IP: 192.168.1.10]
+    N2[Node 2<br/>IP: 192.168.1.11]
+    S[Service<br/>NodePort: 30080]
+    P1[Pod]
+    P2[Pod]
+
+    External -->|192.168.1.10:30080| N1
+    External -->|192.168.1.11:30080| N2
+    N1 --> S
+    N2 --> S
+    S --> P1
+    S --> P2
+```
+
+外部からは`<NodeIP>:<NodePort>`でアクセスでき、Serviceが適切なPodにトラフィックを転送します。
+
+#### PersistentVolumeClaim
+
+PVCは、永続的なストレージを要求するためのリソースです。PodがPVCをマウントすると、StorageClassが自動的にPersistentVolume（PV）を作成します。
+
+```mermaid
+graph TB
+    Pod[Pod<br/>postgres-0]
+    PVC[PVC<br/>postgres-data-0<br/>要求: 20Gi]
+    PV[PersistentVolume<br/>実体: /var/lib/rancher/k3s/storage/]
+    SC[StorageClass<br/>local-path<br/>プロビジョナー]
+
+    Pod -->|マウント| PVC
+    PVC -->|バインド| PV
+    SC -->|自動作成| PV
+```
+
+この仕組みにより、Pod再起動後もデータが永続化されます。
+
+参考: [Kubernetes PersistentVolume](https://kubernetes.io/ja/docs/concepts/storage/persistent-volumes/)
+
+### 今回のシステム構成
+
+今回構築するシステム全体の関係を見てみましょう。
+
+```mermaid
+graph TB
+    subgraph "Kubernetes Cluster"
+        subgraph "Namespace: app"
+            subgraph "Node.js API"
+                D1[Deployment: api<br/>replicas: 1]
+                RS1[ReplicaSet: api-xxx]
+                P1[Pod: api-xxx-abc]
+                S1[Service: api<br/>ClusterIP<br/>DNS: api.app.svc.cluster.local]
+            end
+
+            subgraph "PostgreSQL"
+                SS[StatefulSet: postgres<br/>replicas: 1]
+                P3[Pod: postgres-0]
+                S2[Service: postgres<br/>ClusterIP<br/>DNS: postgres.app.svc.cluster.local]
+                PVC[PVC: postgres-data-0<br/>1Gi]
+                PV[PV: local-path-xxx]
+            end
+
+            SEC[Secret: postgres-secret<br/>POSTGRES_USER<br/>POSTGRES_PASSWORD<br/>POSTGRES_DB]
+        end
+    end
+
+    D1 -->|管理| RS1
+    RS1 -->|作成| P1
+    S1 -->|ルーティング| P1
+
+    SS -->|作成| P3
+    S2 -->|ルーティング| P3
+    P3 -->|マウント| PVC
+    PVC -->|バインド| PV
+
+    P1 -.->|環境変数| SEC
+    P3 -.->|環境変数| SEC
+
+    P1 -->|DB接続| S2
+```
+
+主要な構成要素：
+- **API Deployment**: Node.js APIサーバー（ステートレス）
+- **PostgreSQL StatefulSet**: データベース（ステートフル、永続ストレージ付き）
+- **Service**: 各Podへの安定したネットワークアクセスを提供
+- **Secret**: 認証情報を安全に管理
+- **PVC/PV**: PostgreSQLのデータを永続化
+
+### Kubernetesネットワーキング
+
+#### DNS命名規則
+
+Kubernetes内部では、ServiceにDNS名が自動的に割り当てられます。命名規則は以下の通りです：
+
+```
+<service-name>.<namespace>.svc.cluster.local
+```
+
+例：
+- `postgres.app.svc.cluster.local` → PostgreSQL Service
+- `api.app.svc.cluster.local` → API Service
+
+同じNamespace内では、Service名だけで接続できます：
+- `postgres` → `postgres.app.svc.cluster.local`
+
+参考: [Kubernetes DNS](https://kubernetes.io/ja/docs/concepts/services-networking/dns-pod-service/)
+
+#### kube-proxy
+
+kube-proxyは、各ノード上で動作するネットワークプロキシです。Service IPへのトラフィックを実際のPod IPに転送します。
+
+```mermaid
+graph LR
+    subgraph "Node"
+        Client[Client Pod]
+        KP[kube-proxy<br/>iptables/IPVS]
+        P1[Backend Pod 1<br/>10.42.0.10]
+        P2[Backend Pod 2<br/>10.42.0.11]
+    end
+
+    Client -->|Service IP<br/>10.43.132.9| KP
+    KP -->|ロードバランス| P1
+    KP -->|ロードバランス| P2
+```
+
+kube-proxyは、iptablesまたはIPVSを使用してトラフィックをルーティングし、複数のPodに負荷を分散します。
+
+#### Pod間通信フロー
+
+実際のPod間通信がどのように行われるか、シーケンス図で確認しましょう。
+
+```mermaid
+sequenceDiagram
+    participant App as Node.js App Pod<br/>(api-xxx)
+    participant DNS as CoreDNS
+    participant Proxy as kube-proxy
+    participant Service as Service<br/>(postgres)
+    participant DB as PostgreSQL Pod<br/>(postgres-0)
+
+    App->>DNS: "postgres" のIPアドレスは？
+    DNS->>App: 10.43.100.50 (Service IP)
+
+    App->>Proxy: 10.43.100.50:5432 に接続
+    Note over Proxy: iptablesルールで<br/>バックエンドPodを選択
+    Proxy->>DB: 10.42.0.20:5432 に転送
+
+    DB->>Proxy: レスポンス
+    Proxy->>App: レスポンス転送
+
+    Note over App,DB: 以降の通信は直接接続<br/>（接続確立後はプロキシ不要）
+```
+
+通信の流れ：
+1. **DNS解決**: CoreDNSがService名をService IPに解決
+2. **プロキシ経由**: kube-proxyがService IPを実際のPod IPに変換
+3. **直接通信**: TCP接続確立後は、Pod間で直接通信
+
+### クラスターアーキテクチャ
+
+#### 標準的なKubernetesクラスター
+
+通常のKubernetesクラスターは、Control Plane（管理ノード）とWorker Node（ワーカーノード）で構成されます。
+
+```mermaid
+graph TB
+    subgraph "Control Plane Nodes（管理ノード）"
+        CP1[Master 1<br/>API Server<br/>etcd<br/>Scheduler<br/>Controller Manager]
+        CP2[Master 2]
+        CP3[Master 3]
+    end
+
+    subgraph "Worker Nodes（ワーカーノード）"
+        W1[Worker 1<br/>kubelet<br/>kube-proxy<br/>Container Runtime]
+        W2[Worker 2]
+        W3[Worker 3]
+    end
+
+    Client[kubectl]
+
+    Client -->|API リクエスト| CP1
+    CP1 -.->|同期| CP2
+    CP1 -.->|同期| CP3
+
+    CP1 -->|Pod スケジューリング| W1
+    CP1 -->|Pod スケジューリング| W2
+    CP1 -->|Pod スケジューリング| W3
+
+    W1 -.->|ヘルスチェック| CP1
+    W2 -.->|ヘルスチェック| CP1
+    W3 -.->|ヘルスチェック| CP1
+```
+
+本番環境では、高可用性のために複数のControl Planeノードを配置します。
+
+参考: [Kubernetes Architecture](https://kubernetes.io/ja/docs/concepts/architecture/)
+
+#### 自宅サーバー（Single Node）構成
+
+今回構築するk3s環境は、1台のサーバーにControl PlaneとWorkerの両方の機能を持たせたSingle Node構成です。
+
+```mermaid
+graph TB
+    subgraph "Single Node (自宅サーバー1台)"
+        subgraph "Control Plane"
+            API[API Server]
+            ETCD[SQLite<br/>※etcdの代わり]
+            SCHED[Scheduler]
+            CTRL[Controller Manager]
+        end
+
+        subgraph "Worker"
+            KUBELET[kubelet]
+            PROXY[kube-proxy]
+            RUNTIME[containerd]
+        end
+
+        subgraph "Application Pods"
+            P1[api-xxx]
+            P2[postgres-0]
+        end
+    end
+
+    Client[kubectl]
+
+    Client -->|API リクエスト| API
+    API -->|状態保存| ETCD
+    SCHED -->|スケジューリング| KUBELET
+    KUBELET -->|Pod起動| RUNTIME
+    RUNTIME -->|コンテナ実行| P1
+    RUNTIME -->|コンテナ実行| P2
+```
+
+k3sの特徴：
+- **軽量**: 通常のKubernetesより小さいバイナリサイズ
+- **SQLite**: etcdの代わりにSQLiteを使用（シングルノード構成の場合）
+- **All-in-One**: Control PlaneとWorkerが同居可能
+- **自宅ラボに最適**: リソース消費が少なく、学習に適している
+
+参考: [k3s Documentation](https://docs.k3s.io/)
+
+---
+
+## 環境準備
 
 今回は、DBとAPIサーバーを立てていきます。お家サーバーは物理的に1つしか存在しないので、1ノードに１つのクラスターを作成し、そこにサービスを2つ用意していきます。
 そして、負荷分散をしてみたいので、APIサーバーは２つ立ててみようと思います。
 
+> **📝 環境による違い**
+>
+> この記事では**ローカル開発環境（k3d）**での手順を中心に説明します。
+>
+> **リモートサーバーの場合**は、以下のコマンドでk3sを直接インストールしてください：
+> ```bash
+> curl -sfL https://get.k3s.io | sh -
+>
+> # kubectlの設定
+> export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+> ```
+>
+> **以降のHelmコマンドやマニフェスト適用は、ローカル/リモートで全く同じです。**
+
 まずはローカル環境で動作確認をするため、**k3d**を使います。k3dは、Docker内でk3s（軽量Kubernetes）を実行できるツールです。k3sを直接インストールするとホストOSに影響を与えるため、Docker内で仮想的に動かすk3dを使用します。
 
-https://k3d.io/stable/#releases
+参考: [k3d](https://k3d.io/)
 
 ### k3dのインストール
+
+> **📝 Note:** リモートサーバーでk3sを直接使用する場合、このセクションはスキップしてください。
 
 ```bash
 ✗ brew install k3d
@@ -37,7 +505,11 @@ https://k3d.io/stable/#releases
 ```
 
 ### Helmのインストール
+
 今回KubernetesのパッケージマネージャーにはHelmを使うので、インストールしていきます。
+
+参考: [Helm](https://helm.sh/)
+
 ```bash
 ✗ brew install helm
 Warning: helm 3.19.0 is already installed and up-to-date.
@@ -47,6 +519,8 @@ To reinstall 3.19.0, run:
 
 ### k3dクラスタの作成
 
+> **📝 Note:** リモートサーバーでk3sを直接使用する場合、このセクションはスキップしてください。k3sインストール後、すぐに「Namespaceの作成」に進めます。
+
 ```bash
 k3d cluster create todo-local \
     --api-port 6443 \
@@ -54,32 +528,53 @@ k3d cluster create todo-local \
     --port 8443:443@loadbalancer \
     --servers 1 \
     --agents 2
-INFO[0000] portmapping '8443:443' targets the loadbalancer: defaulting to [servers:*:proxy agents:*:proxy] 
-INFO[0000] portmapping '8080:80' targets the loadbalancer: defaulting to [servers:*:proxy agents:*:proxy] 
-INFO[0000] Prep: Network                                
-INFO[0000] Created network 'k3d-todo-local'             
-INFO[0000] Created image volume k3d-todo-local-images   
-INFO[0000] Starting new tools node...                   
-INFO[0000] Starting node 'k3d-todo-local-tools'         
-INFO[0001] Creating node 'k3d-todo-local-server-0'      
-INFO[0001] Creating node 'k3d-todo-local-agent-0'       
-INFO[0001] Creating node 'k3d-todo-local-agent-1'       
-INFO[0001] Creating LoadBalancer 'k3d-todo-local-serverlb' 
-INFO[0001] Using the k3d-tools node to gather environment information 
-INFO[0001] Starting new tools node...                   
-INFO[0002] Starting node 'k3d-todo-local-tools'         
-INFO[0003] Starting cluster 'todo-local'                
-INFO[0003] Starting servers...                          
-INFO[0003] Starting node 'k3d-todo-local-server-0'      
-INFO[0007] Starting agents...                           
-INFO[0007] Starting node 'k3d-todo-local-agent-1'       
-INFO[0007] Starting node 'k3d-todo-local-agent-0'       
-INFO[0016] Starting helpers...                          
-INFO[0017] Starting node 'k3d-todo-local-serverlb'      
-INFO[0023] Injecting records for hostAliases (incl. host.k3d.internal) and for 5 network members into CoreDNS configmap... 
-INFO[0025] Cluster 'todo-local' created successfully!   
-INFO[0025] You can now use it like this:  
+
+INFO[0000] Created network 'k3d-todo-local'
+INFO[0000] Created image volume k3d-todo-local-images
+INFO[0001] Creating node 'k3d-todo-local-server-0'
+INFO[0001] Creating node 'k3d-todo-local-agent-0'
+INFO[0001] Creating node 'k3d-todo-local-agent-1'
+INFO[0025] Cluster 'todo-local' created successfully!
 ```
+
+<details>
+<summary>📋 完全なクラスター作成ログを表示</summary>
+
+```bash
+k3d cluster create todo-local \
+    --api-port 6443 \
+    --port 8080:80@loadbalancer \
+    --port 8443:443@loadbalancer \
+    --servers 1 \
+    --agents 2
+INFO[0000] portmapping '8443:443' targets the loadbalancer: defaulting to [servers:*:proxy agents:*:proxy]
+INFO[0000] portmapping '8080:80' targets the loadbalancer: defaulting to [servers:*:proxy agents:*:proxy]
+INFO[0000] Prep: Network
+INFO[0000] Created network 'k3d-todo-local'
+INFO[0000] Created image volume k3d-todo-local-images
+INFO[0000] Starting new tools node...
+INFO[0000] Starting node 'k3d-todo-local-tools'
+INFO[0001] Creating node 'k3d-todo-local-server-0'
+INFO[0001] Creating node 'k3d-todo-local-agent-0'
+INFO[0001] Creating node 'k3d-todo-local-agent-1'
+INFO[0001] Creating LoadBalancer 'k3d-todo-local-serverlb'
+INFO[0001] Using the k3d-tools node to gather environment information
+INFO[0001] Starting new tools node...
+INFO[0002] Starting node 'k3d-todo-local-tools'
+INFO[0003] Starting cluster 'todo-local'
+INFO[0003] Starting servers...
+INFO[0003] Starting node 'k3d-todo-local-server-0'
+INFO[0007] Starting agents...
+INFO[0007] Starting node 'k3d-todo-local-agent-1'
+INFO[0007] Starting node 'k3d-todo-local-agent-0'
+INFO[0016] Starting helpers...
+INFO[0017] Starting node 'k3d-todo-local-serverlb'
+INFO[0023] Injecting records for hostAliases (incl. host.k3d.internal) and for 5 network members into CoreDNS configmap...
+INFO[0025] Cluster 'todo-local' created successfully!
+INFO[0025] You can now use it like this:
+```
+
+</details>
 このコマンドで、下記Dockerリソースが k3dコンテナの中にcluster内に作成されました。それぞれ何なのかはわかっていません。
 
 - network
@@ -100,6 +595,13 @@ NETWORK ID     NAME                 DRIVER    SCOPE
 
 
 ```
+
+ネットワークの主要設定：
+- **サブネット**: 172.20.0.0/16
+- **接続ノード**: server-0 (172.20.0.3), agent-0 (172.20.0.5), agent-1 (172.20.0.4), serverlb (172.20.0.6)
+
+<details>
+<summary>📋 完全なネットワーク設定を表示</summary>
 
 ```bash
 ✗ docker inspect k3d-todo-local
@@ -176,8 +678,9 @@ NETWORK ID     NAME                 DRIVER    SCOPE
         }
     }
 ]
-
 ```
+
+</details>
 
 - image volume
 
@@ -268,6 +771,8 @@ StorageClassが`local-path`になっています。これはk3sのデフォル�
 
 Kubernetesでは、リソースを論理的に分離するためにNamespaceを使います。今回はアプリケーションレイヤーのリソースという意味で`app`という名前のNamespaceを作成することにします。
 
+参考: [Kubernetes Namespace](https://kubernetes.io/ja/docs/concepts/overview/working-with-objects/namespaces/)
+
 ```bash
 ✗ kubectl create namespace app
 namespace/app created
@@ -289,7 +794,7 @@ kubernetesの用語に慣れてきたら、kubeadmも挑戦してみます。
 
 参考：https://qiita.com/dyoshiha/items/0e5a4e9ed7369e97f190
 
-## 2. アプリケーションの準備
+## アプリケーションの準備
 インフラは出来上がったので、kubernetes podにマウントするimageを作成していこうと思います。
 自分の慣れている言語を使いたいので、言語はNode、imageにbuildしていきます。
 
@@ -332,33 +837,62 @@ https://github.com/subaru-hello/todo-k3s/tree/main/packages/api
 
 ### k3dクラスタへイメージインポート
 
+> **📝 環境による違い**
+>
+> **ローカル（k3d）**: イメージをk3dクラスターに直接インポート
+> ```bash
+> k3d image import docker.io/subaru88/home-kube:sha-xxx -c todo-local
+> ```
+>
+> **リモート（k3s直接）**: Docker Hubなどのレジストリからpull、またはnerdctlでインポート
+> ```bash
+> # レジストリからpull（推奨）
+> sudo crictl pull docker.io/subaru88/home-kube:sha-xxx
+>
+> # またはローカルイメージをインポート
+> sudo nerdctl -n k8s.io load -i image.tar
+> ```
+
 ローカル開発では、private registryへのpushを省略し、直接k3dへインポートします。
 
 ```bash
 ✗ k3d image import docker.io/subaru88/todo-api:sha-e432059 -c todo-local
-INFO[0000] Importing image(s) into cluster 'todo-local' 
-INFO[0000] Saving 1 image(s) from runtime...            
-INFO[0001] Importing images into nodes...               
-INFO[0001] Importing images from tarball '/k3d/images/k3d-todo-local-images-20251109224958.tar' into node 'k3d-todo-local-server-0'... 
-INFO[0001] Importing images from tarball '/k3d/images/k3d-todo-local-images-20251109224958.tar' into node 'k3d-todo-local-agent-1'... 
-INFO[0001] Importing images from tarball '/k3d/images/k3d-todo-local-images-20251109224958.tar' into node 'k3d-todo-local-agent-0'... 
-INFO[0004] Removing the tarball(s) from image volume... 
-INFO[0005] Removing k3d-tools node...                   
-INFO[0005] Successfully imported image(s)               
-INFO[0005] Successfully imported 1 image(s) into 1 cluster(s) 
+INFO[0000] Importing image(s) into cluster 'todo-local'
+INFO[0005] Successfully imported 1 image(s) into 1 cluster(s)
 ```
+
+<details>
+<summary>📋 完全なインポートログを表示</summary>
+
+```bash
+✗ k3d image import docker.io/subaru88/todo-api:sha-e432059 -c todo-local
+INFO[0000] Importing image(s) into cluster 'todo-local'
+INFO[0000] Saving 1 image(s) from runtime...
+INFO[0001] Importing images into nodes...
+INFO[0001] Importing images from tarball '/k3d/images/k3d-todo-local-images-20251109224958.tar' into node 'k3d-todo-local-server-0'...
+INFO[0001] Importing images from tarball '/k3d/images/k3d-todo-local-images-20251109224958.tar' into node 'k3d-todo-local-agent-1'...
+INFO[0001] Importing images from tarball '/k3d/images/k3d-todo-local-images-20251109224958.tar' into node 'k3d-todo-local-agent-0'...
+INFO[0004] Removing the tarball(s) from image volume...
+INFO[0005] Removing k3d-tools node...
+INFO[0005] Successfully imported image(s)
+INFO[0005] Successfully imported 1 image(s) into 1 cluster(s)
+```
+
+</details>
 
 イメージがk3dクラスタ内で使用可能になりました。
 
 ---
 
-## 3. PostgreSQLのデプロイ
+## PostgreSQLのデプロイ
 
 では、データベースからデプロイしていきます。
 
 ### なぜStatefulSetを使うのか？
 
 KubernetesにはPodを管理する方法がいくつかありますが、データベースのような**ステートフルなアプリケーション**には**StatefulSet**を使います。
+
+参考: [Kubernetes StatefulSet](https://kubernetes.io/ja/docs/concepts/workloads/controllers/statefulset/)
 
 StatefulSetの特徴:
 - **固定された識別子**: Podに永続的な名前が付く（例: postgres-0）
@@ -382,6 +916,8 @@ graph TB
 ### Secretの作成
 
 データベースの認証情報をSecretとして保存します。Secretは、パスワードやAPIキーなどの機密情報を安全に保存するためのKubernetesリソースです。
+
+参考: [Kubernetes Secret](https://kubernetes.io/ja/docs/concepts/configuration/secret/)
 
 まず、認証情報を`.env.secret`ファイルとして用意します：
 
@@ -518,12 +1054,11 @@ PostgreSQLが正常に起動し、PVCもBindされました。
 
 ### PVC（PersistentVolumeClaim）とは？
 
-永続的なストレージを要求するためのリソース。
-https://kubernetes.io/ja/docs/concepts/storage/persistent-volumes/
+永続的なストレージを要求するためのリソースです。
 
-PVCを知るためには、Volumeの概念を知る必要があると公式Docに書いてありまました。なので、一読してみます。
-
-https://kubernetes.io/ja/docs/concepts/storage/volumes/
+参考:
+- [Kubernetes PersistentVolume](https://kubernetes.io/ja/docs/concepts/storage/persistent-volumes/)
+- [Kubernetes Volume](https://kubernetes.io/ja/docs/concepts/storage/volumes/)
 
 
 
@@ -551,9 +1086,24 @@ graph TB
 
 ### 動作確認
 
+PostgreSQLが正常に起動したことを確認します：
+
 ```bash
 # PostgreSQL Podのログ確認
- ✗ kubectl -n app logs postgres-0
+✗ kubectl -n app logs postgres-0
+The files belonging to this database system will be owned by user "postgres".
+...
+PostgreSQL init process complete; ready for start up.
+
+2025-11-07 00:21:14.820 UTC [1] LOG:  starting PostgreSQL 16.10
+2025-11-07 00:21:14.825 UTC [1] LOG:  database system is ready to accept connections
+```
+
+<details>
+<summary>📋 完全な初期化ログを表示</summary>
+
+```bash
+✗ kubectl -n app logs postgres-0
 The files belonging to this database system will be owned by user "postgres".
 This user must also own the server process.
 
@@ -616,8 +1166,9 @@ PostgreSQL init process complete; ready for start up.
 2025-11-07 00:26:19.153 UTC [56] LOG:  checkpoint complete: wrote 45 buffers (0.3%); 0 WAL file(s) added, 0 removed, 0 recycled; write=4.258 s, sync=0.003 s, total=4.264 s; sync files=12, longest=0.003 s, average=0.001 s; distance=260 kB, estimate=260 kB; lsn=0/195FBC0, redo lsn=0/195FB88
 2025-11-07 04:33:32.351 UTC [56] LOG:  checkpoint starting: time
 2025-11-07 04:33:37.689 UTC [56] LOG:  checkpoint complete: wrote 53 buffers (0.3%); 0 WAL file(s) added, 0 removed, 0 recycled; write=5.326 s, sync=0.005 s, total=5.340 s; sync files=41, longest=0.002 s, average=0.001 s; distance=168 kB, estimate=251 kB; lsn=0/1989DE0, redo lsn=0/1989DA8
-
 ```
+
+</details>
 ### PostgreSQL接続テスト
 
 ```bash
@@ -633,13 +1184,17 @@ PostgreSQL init process complete; ready for start up.
 
 ---
 
-## 4. Node.js APIのデプロイ
+## Node.js APIのデプロイ
 
 次に、APIサーバーをデプロイします。
 
 ### DeploymentとStatefulSetの違い
 
-Node.js APIには**Deployment**を使います。Deploymentの特徴:
+Node.js APIには**Deployment**を使います。
+
+参考: [Kubernetes Deployment](https://kubernetes.io/ja/docs/concepts/workloads/controllers/deployment/)
+
+Deploymentの特徴:
 
 - **レプリカ管理**: 指定した数のPodを常に稼働させる
 - **ローリングアップデート**: ダウンタイムなしでアプリケーションを更新
@@ -747,6 +1302,15 @@ spec:
 ```bash
 ✗ k3d image import subaru88/home-kube:sha-e432059 -c todo-local
 INFO[0000] Importing image(s) into cluster 'todo-local'
+INFO[0003] Successfully imported 1 image(s) into 1 cluster(s)
+```
+
+<details>
+<summary>📋 完全なインポートログを表示</summary>
+
+```bash
+✗ k3d image import subaru88/home-kube:sha-e432059 -c todo-local
+INFO[0000] Importing image(s) into cluster 'todo-local'
 INFO[0000] Starting new tools node...
 INFO[0000] Starting node 'k3d-todo-local-tools'
 INFO[0000] Saving 1 image(s) from runtime...
@@ -759,6 +1323,8 @@ INFO[0003] Removing k3d-tools node...
 INFO[0003] Successfully imported image(s)
 INFO[0003] Successfully imported 1 image(s) into 1 cluster(s)
 ```
+
+</details>
 
 次にHelmでAPIをデプロイします：
 
@@ -796,13 +1362,15 @@ APIのPodが起動しました。
 
 ---
 
-## 5. Pod間通信の仕組み
+## Pod間通信の仕組み
 
 ここで重要な疑問が生まれます：**どうやってNode.js APIからPostgreSQLに接続できているのか？**
 
 ### Serviceの役割
 
 YAMLファイルで`PGHOST: postgres.app.svc.cluster.local`と指定しましたが、これは**Service**というリソースを指しています。
+
+参考: [Kubernetes Service](https://kubernetes.io/ja/docs/concepts/services-networking/service/)
 
 **Service**は、Podへの安定したネットワークアクセスを提供します。Podは再起動時にIPアドレスが変わるため、Serviceを使って固定のエンドポイントを作成します。
 
@@ -917,9 +1485,22 @@ graph TB
 
 ---
 
-## 6. 動作確認
+## 動作確認
 
 ### Port Forwardでアクセス
+
+> **📝 環境による違い**
+>
+> **ローカル（k3d）**: `kubectl port-forward`を使用
+> ```bash
+> kubectl -n app port-forward svc/api 3000:3000 &
+> ```
+>
+> **リモート（k3s直接）**: Cloudflare Tunnelや外部URLで直接アクセス
+> ```bash
+> # 例: https://api.octomblog.com にアクセス
+> curl https://api.octomblog.com/healthz
+> ```
 
 ローカルマシンからAPIにアクセスするために、port-forwardを使用します：
 
@@ -997,344 +1578,52 @@ Todo削除成功。
 
 ---
 
-## 7. トラブルシューティング
+## 参考資料
 
-実際のデプロイでは、さまざまな問題が発生する可能性があります。よくある問題と解決方法を紹介します。
+### Kubernetes公式ドキュメント
 
-### Podが起動しない（ImagePullBackOff）
+#### コア概念
+- [Kubernetes概要](https://kubernetes.io/ja/docs/concepts/)
+- [Kubernetesアーキテクチャ](https://kubernetes.io/ja/docs/concepts/architecture/)
 
-症状:
-```bash
-kubectl -n app get pods
-```
+#### ワークロード
+- [Pod](https://kubernetes.io/ja/docs/concepts/workloads/pods/)
+- [Deployment](https://kubernetes.io/ja/docs/concepts/workloads/controllers/deployment/)
+- [StatefulSet](https://kubernetes.io/ja/docs/concepts/workloads/controllers/statefulset/)
+- [ReplicaSet](https://kubernetes.io/ja/docs/concepts/workloads/controllers/replicaset/)
 
-出力:
-```
-NAME       READY   STATUS             RESTARTS   AGE
-api-xxx    0/1     ImagePullBackOff   0          2m
-```
+#### ネットワーキング
+- [Service](https://kubernetes.io/ja/docs/concepts/services-networking/service/)
+- [DNS for Services and Pods](https://kubernetes.io/ja/docs/concepts/services-networking/dns-pod-service/)
 
-原因: プライベートなDockerイメージにアクセスできない
+#### ストレージ
+- [PersistentVolume](https://kubernetes.io/ja/docs/concepts/storage/persistent-volumes/)
+- [Volume](https://kubernetes.io/ja/docs/concepts/storage/volumes/)
+- [StorageClass](https://kubernetes.io/ja/docs/concepts/storage/storage-classes/)
 
-解決方法:
+#### 設定
+- [Secret](https://kubernetes.io/ja/docs/concepts/configuration/secret/)
+- [ConfigMap](https://kubernetes.io/ja/docs/concepts/configuration/configmap/)
 
-```bash
-# ImagePullSecretを作成
-kubectl -n app create secret docker-registry dockerhub-secret \
-  --docker-server=https://index.docker.io/v1/ \
-  --docker-username=<your-docker-username> \
-  --docker-password=$DOCKER_PASSWORD
-```
+#### 名前空間
+- [Namespace](https://kubernetes.io/ja/docs/concepts/overview/working-with-objects/namespaces/)
 
-出力: `secret/dockerhub-secret created`
+### k3s/k3d
 
-```bash
-# Deploymentに追加
-kubectl -n app patch deployment api -p '
-{
-  "spec": {
-    "template": {
-      "spec": {
-        "imagePullSecrets": [{"name": "dockerhub-secret"}]
-      }
-    }
-  }
-}'
-```
-
-出力: `deployment.apps/api patched`
-
-ImagePullSecretを設定することで、プライベートイメージにアクセスできるようになります。
-
-### Podがクラッシュする（CrashLoopBackOff）
-
-症状:
-```bash
-kubectl -n app get pods
-```
-
-出力:
-```
-NAME       READY   STATUS             RESTARTS   AGE
-api-xxx    0/1     CrashLoopBackOff   5          3m
-```
-
-原因: アプリケーションエラー（PostgreSQL接続失敗など）
-
-調査方法:
-
-```bash
-# ログを確認
-kubectl -n app logs api-xxx
-```
-
-出力例:
-```
-Error connecting to database: AggregateError [ECONNREFUSED]:
-    at internalConnectMultiple (node:net:1122:18)
-  code: 'ECONNREFUSED',
-  address: '127.0.0.1',
-  port: 5432
-```
-
-原因: 環境変数の設定ミス
-
-環境変数の確認:
-
-```bash
-kubectl -n app describe pod api-xxx | grep -A 20 "Environment:"
-```
-
-問題のある環境変数例:
-```
-DB_HOST=postgres  # ❌ 新しいイメージはPGHOSTを使用
-DB_PORT=5432      # ❌ 新しいイメージはPGPORTを使用
-```
-
-解決方法:
-
-PostgreSQL標準環境変数（PG*）を使用するように修正します：
-
-```bash
-kubectl -n app patch deployment api -p '
-{
-  "spec": {
-    "template": {
-      "spec": {
-        "containers": [{
-          "name": "api",
-          "env": [
-            {"name": "PORT", "value": "3000"},
-            {"name": "NODE_ENV", "value": "production"},
-            {"name": "PGHOST", "value": "postgres"},
-            {"name": "PGPORT", "value": "5432"},
-            {"name": "PGUSER", "valueFrom": {"secretKeyRef": {"name": "postgres-secret", "key": "POSTGRES_USER"}}},
-            {"name": "PGPASSWORD", "valueFrom": {"secretKeyRef": {"name": "postgres-secret", "key": "POSTGRES_PASSWORD"}}},
-            {"name": "PGDATABASE", "value": "todos"}
-          ]
-        }]
-      }
-    }
-  }
-}'
-```
-
-デプロイ監視:
-
-```bash
-kubectl -n app rollout status deployment/api
-```
-
-出力:
-```
-Waiting for deployment "api" rollout to finish: 1 old replicas are pending termination...
-deployment "api" successfully rolled out
-```
-
-正しい環境変数でデプロイ成功。
-
-### データベース接続エラー
-
-確認手順:
-
-```bash
-# 1. PostgreSQL Podが起動しているか
-kubectl -n app get pods postgres-0
-```
-
-```bash
-# 2. PostgreSQL Serviceが存在するか
-kubectl -n app get svc postgres
-```
-
-```bash
-# 3. DNS解決ができるか
-kubectl -n app exec -it api-xxx -- nslookup postgres.app.svc.cluster.local
-```
-
-```bash
-# 4. ポート接続確認
-kubectl -n app exec -it api-xxx -- nc -zv postgres.app.svc.cluster.local 5432
-```
-
-```bash
-# 5. PostgreSQLログ確認
-kubectl -n app logs postgres-0
-```
-
----
-
-## 8. ローリングアップデートとスケーリング
-
-### ローリングアップデート
-
-新しいバージョンのアプリケーションをダウンタイムなしでデプロイします。
-
-```bash
-# イメージタグを更新
-kubectl -n app set image deployment/api \
-  api=docker.io/yourusername/todo-api:v1.1.0
-```
-
-出力: `deployment.apps/api image updated`
-
-```bash
-# ローリングアップデートの監視
-kubectl -n app rollout status deployment/api
-```
-
-出力:
-```
-Waiting for deployment "api" rollout to finish: 1 out of 2 new replicas have been updated...
-Waiting for deployment "api" rollout to finish: 1 old replicas are pending termination...
-deployment "api" successfully rolled out
-```
-
-ローリングアップデート成功。古いPodから新しいPodへ段階的に切り替わりました。
-
-ロールバック:
-
-問題が発生した場合、前のバージョンに戻します。
-
-```bash
-# 前のバージョンにロールバック
-kubectl -n app rollout undo deployment/api
-```
-
-出力: `deployment.apps/api rolled back`
-
-```bash
-# 特定のリビジョンにロールバック
-kubectl -n app rollout history deployment/api
-kubectl -n app rollout undo deployment/api --to-revision=2
-```
-
-### スケーリング
-
-負荷に応じてPod数を増減させます。
-
-```bash
-# レプリカ数を5に増やす
-kubectl -n app scale deployment api --replicas=5
-```
-
-出力: `deployment.apps/api scaled`
-
-```bash
-# 確認
-kubectl -n app get pods
-```
-
-出力:
-```
-NAME                   READY   STATUS    RESTARTS   AGE
-api-586858cdb6-zkvkk   1/1     Running   0          10m
-api-586858cdb6-abc123  1/1     Running   0          10m
-api-586858cdb6-def456  1/1     Running   0          10s
-api-586858cdb6-ghi789  1/1     Running   0          10s
-api-586858cdb6-jkl012  1/1     Running   0          10s
-postgres-0             1/1     Running   0          15m
-```
-
-Podが5つに増えました。
-
-```bash
-# 元に戻す
-kubectl -n app scale deployment api --replicas=2
-```
-
-出力: `deployment.apps/api scaled`
-
----
-
-## 9. クラスター全体像の振り返り
-
-ここまでで、PostgreSQLとNode.js APIのデプロイが完了しました。最後に、Kubernetesクラスター全体の構成を振り返りましょう。
-
-### 自宅Kubernetesのアーキテクチャ
-
-今回構築した環境は、1台のマシンでControl PlaneとWorker Nodeの両方を稼働させています。
-
-```mermaid
-graph TB
-    subgraph "Single Node (自宅サーバー1台)"
-        subgraph "Control Plane"
-            API[API Server]
-            ETCD[SQLite<br/>※etcdの代わり]
-            SCHED[Scheduler]
-            CTRL[Controller Manager]
-        end
-
-        subgraph "Worker"
-            KUBELET[kubelet]
-            PROXY[kube-proxy]
-            RUNTIME[containerd]
-        end
-
-        subgraph "Application Pods"
-            P1[api-xxx]
-            P2[postgres-0]
-        end
-    end
-
-    Client[kubectl]
-
-    Client -->|API リクエスト| API
-    API -->|状態保存| ETCD
-    SCHED -->|スケジューリング| KUBELET
-    KUBELET -->|Pod起動| RUNTIME
-    RUNTIME -->|コンテナ実行| P1
-    RUNTIME -->|コンテナ実行| P2
-```
-
-k3sの特徴:
-- **軽量**: メモリ使用量が少ない（512MB～）
-- **シンプル**: 単一バイナリで配布
-- **etcd不要**: デフォルトでSQLiteを使用
-- **組み込みLoadBalancer**: ServiceLB（Klipper）が標準搭載
-
-### 標準的なKubernetesクラスター（参考）
-
-本番環境では、役割に応じて複数のノードで構成されることが一般的です。
-
-```mermaid
-graph TB
-    subgraph "Control Plane Nodes（管理ノード）"
-        CP1[Master 1<br/>API Server<br/>etcd<br/>Scheduler<br/>Controller Manager]
-        CP2[Master 2]
-        CP3[Master 3]
-    end
-
-    subgraph "Worker Nodes（ワーカーノード）"
-        W1[Worker 1<br/>kubelet<br/>kube-proxy<br/>Container Runtime]
-        W2[Worker 2]
-        W3[Worker 3]
-    end
-
-    Client[kubectl]
-
-    Client -->|API リクエスト| CP1
-    CP1 -.->|同期| CP2
-    CP1 -.->|同期| CP3
-
-    CP1 -->|Pod スケジューリング| W1
-    CP1 -->|Pod スケジューリング| W2
-    CP1 -->|Pod スケジューリング| W3
-
-    W1 -.->|ヘルスチェック| CP1
-    W2 -.->|ヘルスチェック| CP1
-    W3 -.->|ヘルスチェック| CP1
-```
-
-Control Plane（コントロールプレーン）: クラスター全体を管理する「頭脳」部分
-Worker Node（ワーカーノード）: 実際にアプリケーション（Pod）が動作するノード
-
-今回学んだ内容は、本番環境の標準的なKubernetesでもそのまま適用できます。
-
-
-
-### 参考資料
-
-- [Kubernetes公式ドキュメント](https://kubernetes.io/docs/)
 - [k3s公式サイト](https://k3s.io/)
-- [Helm公式ドキュメント](https://helm.sh/docs/)
+- [k3s Documentation](https://docs.k3s.io/)
+- [k3d公式サイト](https://k3d.io/)
+- [k3dインストールガイド](https://k3d.io/stable/#installation)
+- [k3dコマンドリファレンス](https://k3d.io/stable/usage/commands/)
+
+### Helm
+
+- [Helm公式サイト](https://helm.sh/)
+- [Helmドキュメント](https://helm.sh/docs/)
+- [Helmチャート開発ガイド](https://helm.sh/docs/chart_template_guide/)
+
+### Docker
+
+- [Docker公式ドキュメント](https://docs.docker.com/)
+- [Dockerfileリファレンス](https://docs.docker.com/engine/reference/builder/)
+

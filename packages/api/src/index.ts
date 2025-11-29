@@ -4,6 +4,7 @@ import { serve } from '@hono/node-server';
 import { cors } from 'hono/cors';
 import { AppDataSource } from './db/dataSource';
 import todoRoutes from './routes/todoRoutes';
+import testRoutes from './routes/testRoutes';
 
 const app = new Hono();
 const PORT = process.env.PORT || 3000;
@@ -29,6 +30,7 @@ app.get('/dbcheck', async (c) => {
 });
 
 app.route('/api', todoRoutes);
+app.route('/test', testRoutes);
 
 AppDataSource.initialize()
   .then(() => {

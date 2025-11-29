@@ -1,0 +1,36 @@
+namespace: app
+
+# gVisor RuntimeClass指定
+runtimeClassName: gvisor
+
+image:
+  repository: docker.io/subaru88/home-kube
+  tag: "sha-gvisor-test"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 3000
+
+env:
+  NODE_ENV: production
+  ALLOWED_ORIGINS: "*"  # 検証環境用（本番運用時は適切なオリジンに変更）
+
+postgres:
+  useSecret: true
+  secretName: postgres-secret
+  host: postgres.app.svc.cluster.local
+  port: "5432"
+  injectJwtSecret: true
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "256Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+imagePullSecrets: []

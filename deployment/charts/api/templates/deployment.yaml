@@ -13,6 +13,9 @@ spec:
       labels:
         app: api
     spec:
+{{- if .Values.runtimeClassName }}
+      runtimeClassName: {{ .Values.runtimeClassName }}
+{{- end }}
 {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
 {{- range .Values.imagePullSecrets }}
