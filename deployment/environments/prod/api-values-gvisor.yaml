@@ -11,6 +11,7 @@ image:
 replicaCount: 1
 
 service:
+  name: api-gvisor
   type: ClusterIP
   port: 3000
 
